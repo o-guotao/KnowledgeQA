@@ -119,6 +119,9 @@ async def stream_chat(
                                     slot["arguments"] += fn["arguments"]
 
             if result.tool_calls:
+                # 工具调用也要计费：先把本轮已收集的 usage 吐出，避免 tokens 漏算
+                if result.usage is not None:
+                    yield ("usage", None, result)
                 yield ("tool_call", None, result)
             else:
                 yield ("usage", None, result)

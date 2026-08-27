@@ -13,7 +13,8 @@ const CitationSchema = z.object({
 });
 
 export interface DisplayMessage {
-  id: string;
+  id: string;            // 本地稳定 id，用作 React key，永不变更
+  serverId?: string;     // 服务端真实 message_id，用于工具确认等需要回查的场景
   role: "user" | "assistant" | "tool";
   content: string;
   status?: Message["status"] | "local_streaming";

@@ -80,12 +80,20 @@ async def execute_tool(
         if document is None:
             raise AppError("NOT_FOUND", "文档不存在或不属于当前用户", 404)
         filename = document.filename
+        object_key = document.object_key
         await db.execute(delete(Chunk).where(Chunk.document_id == document.id))
         await db.delete(document)
         try:
-            await delete_object(document.object_key)
-        except Exception as exc:  # 对象存储失败不回滚 DB，仅留痕
-            logger.warning("minio delete failed: %s", exc, extra={"event": "storage_orphan"})
+            await delete_object(object_key)
+        except Exception as exc:
+            # DB 已删但对象存储失败：记录孤儿对象 key，便于定期清理。
+            # 不回滚 DB——文档已从知识库消失，存储泄漏是可接受的最终一致态。
+            from app.services.orphans import record_orphan
+            await record_orphan(db, object_key, str(exc)[:200])
+            logger.warning(
+                "minio delete failed, recorded as orphan: %s", object_key,
+                extra={"event": "storage_orphan", "extra": {"key": object_key}},
+            )
         await db.flush()
         logger.info(
             "document deleted via confirmed tool",

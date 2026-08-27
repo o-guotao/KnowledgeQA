@@ -141,6 +141,10 @@ async def _event_stream(
         messages = history[:-1] + [{"role": "user", "content": build_rag_prompt(body.content, chunks)}]
 
         # ---- 模型流式调用（工具回路最多 2 轮） ----
+        # 每轮 stream_chat 末尾会 yield usage（含工具调用轮）；
+        # usage 事件到达即累计费用，避免工具回路/确认路径漏算 token。
+        accumulated_prompt = 0
+        accumulated_completion = 0
         usage: dict | None = None
         for round_no in range(2):
             has_tool_call = False
@@ -152,6 +156,20 @@ async def _event_stream(
                 if kind == "delta":
                     content_parts.append(payload or "")
                     yield _sse(DeltaEvent(trace_id=trace_id, content=payload or ""))
+                elif kind == "usage":
+                    u = result.usage or {}
+                    p, c = u.get("prompt_tokens", 0), u.get("completion_tokens", 0)
+                    accumulated_prompt += p
+                    accumulated_completion += c
+                    usage = {"prompt_tokens": accumulated_prompt, "completion_tokens": accumulated_completion}
+                    cost_cny_round = cost.compute_cost_cny(p, c)
+                    async with SessionLocal() as db:
+                        await cost.accumulate_usage(db, user.id, p, c)
+                        await db.commit()
+                    yield _sse(UsageEvent(
+                        trace_id=trace_id, prompt_tokens=p,
+                        completion_tokens=c, cost_cny=cost_cny_round,
+                    ))
                 elif kind == "tool_call":
                     has_tool_call = True
                     auto: list[tuple[dict, str]] = []
@@ -171,6 +189,7 @@ async def _event_stream(
                             assistant_id, status="pending_confirm", content=result.content,
                             citations=citations,
                             tool_call={"id": pending["id"], "name": pending["name"], "args": args},
+                            usage={**(usage or {}), "cost_cny": cost.compute_cost_cny(accumulated_prompt, accumulated_completion)} if usage else None,
                         )
                         yield _sse(ToolCallEvent(
                             trace_id=trace_id, message_id=assistant_id,
@@ -201,21 +220,13 @@ async def _event_stream(
             if not has_tool_call:
                 break
 
-        # ---- 正常收尾：usage + 费用 + 完成态 ----
-        cost_cny = 0.0
-        if usage:
-            cost_cny = cost.compute_cost_cny(usage["prompt_tokens"], usage["completion_tokens"])
-            async with SessionLocal() as db:
-                await cost.accumulate_usage(db, user.id, usage["prompt_tokens"], usage["completion_tokens"])
-                await db.commit()
-            yield _sse(UsageEvent(
-                trace_id=trace_id, prompt_tokens=usage["prompt_tokens"],
-                completion_tokens=usage["completion_tokens"], cost_cny=cost_cny,
-            ))
-
+        # ---- 正常收尾：汇总 usage 落到消息记录，完成态 ----
+        # 费用已在每次 usage 事件到达时累计，此处不再重复累加。
+        cost_cny = cost.compute_cost_cny(accumulated_prompt, accumulated_completion) if usage else 0.0
         await _finish_message(
             assistant_id, status="complete", content="".join(content_parts),
-            citations=citations, usage={**(usage or {}), "cost_cny": cost_cny},
+            citations=citations,
+            usage={**(usage or {}), "cost_cny": cost_cny} if usage else None,
         )
         yield _sse(DoneEvent(trace_id=trace_id, message_id=assistant_id))
 

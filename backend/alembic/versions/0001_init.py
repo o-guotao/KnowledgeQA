@@ -121,10 +121,11 @@ def upgrade() -> None:
     )
     op.create_index("ix_chunks_document_id", "chunks", ["document_id"])
     op.create_index("ix_chunks_user_id", "chunks", ["user_id"])
-    # IVFFlat 向量索引（余弦距离），数据量增长后召回仍为近似 O(log n)
+    # HNSW 向量索引（余弦距离）：建表即生效，小数据集召回也准确；
+    # 不用 IVFFlat 是因其需数据聚类、空表/小表上召回质量异常，会污染评测指标。
     op.execute(
         "CREATE INDEX ix_chunks_embedding ON chunks "
-        "USING ivfflat (embedding vector_cosine_ops) WITH (lists = 100)"
+        "USING hnsw (embedding vector_cosine_ops)"
     )
 
 

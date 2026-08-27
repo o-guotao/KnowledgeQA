@@ -31,7 +31,7 @@ docker compose up -d --build
 ```
 backend/   FastAPI 应用（app/）、任务 worker（worker/）、评测（eval/）、迁移（alembic/）
 frontend/  React+Vite（zod 契约、SSE hook、shadcn 风格组件）
-docs/      system-design/ 三篇设计练习；evidence/ 评测表与证据
+docs/      system-design/ 三篇设计练习；evidence/ 评测表与证据；依赖说明.md 各依赖职责
 ```
 
 ## 功能清单

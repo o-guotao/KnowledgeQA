@@ -20,6 +20,29 @@ from app.models.task import Task
 logger = logging.getLogger("worker")
 
 
+async def reap_stuck_running(settings) -> int:
+    """回收卡死的 running 任务：started_at 早于 timeout 的判为僵尸，
+    重置为 failed 交由退避重试/死信流程处理。覆盖 worker 崩溃/OOM/断电场景。"""
+    async with SessionLocal() as db:
+        result = await db.execute(
+            text(
+                """
+                UPDATE tasks SET status = 'failed', error = left(error || ' | ', 500) || 'reaped: stuck running'
+                WHERE status = 'running'
+                  AND started_at < now() - make_interval(secs => :timeout)
+                """
+            ),
+            {"timeout": settings.task_timeout_seconds * 2},
+        )
+        if result.rowcount:
+            await db.commit()
+            logger.warning(
+                "reaped stuck running tasks",
+                extra={"event": "task_reaped", "extra": {"count": result.rowcount}},
+            )
+        return result.rowcount or 0
+
+
 async def claim_task() -> Task | None:
     """FOR UPDATE SKIP LOCKED 抢占一条到期任务，避免多 worker 重复执行。"""
     async with SessionLocal() as db:
@@ -139,7 +162,12 @@ async def handle_failure(task: Task, error: str) -> None:
 async def loop() -> None:
     settings = get_settings()
     logger.info("worker started")
+    reap_counter = 0
     while True:
+        # 每约 60s 巡检一次僵尸 running，避免高频查询
+        reap_counter += 1
+        if reap_counter % 30 == 1:
+            await reap_stuck_running(settings)
         task = await claim_task()
         if task is None:
             await asyncio.sleep(2)

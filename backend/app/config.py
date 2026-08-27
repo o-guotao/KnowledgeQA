@@ -21,6 +21,9 @@ class Settings(BaseSettings):
     jwt_secret: str = "dev-only-secret"
     jwt_expire_minutes: int = 720
 
+    # CORS（虚机部署改为实际前端域名，逗号分隔）
+    cors_origins: str = "http://localhost:5173,http://127.0.0.1:5173"
+
     # DeepSeek
     deepseek_api_key: str = ""
     deepseek_base_url: str = "https://api.deepseek.com"

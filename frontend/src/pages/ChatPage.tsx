@@ -122,7 +122,9 @@ export function ChatPage() {
         setToolCall(event);
         setMessages((prev) =>
           prev.map((m) =>
-            m.id === localAssistantId ? { ...m, status: "pending_confirm" } : m,
+            m.id === localAssistantId
+              ? { ...m, serverId: event.message_id, status: "pending_confirm" as const }
+              : m,
           ),
         );
         break;
@@ -137,10 +139,11 @@ export function ChatPage() {
         );
         break;
       case "done":
+        // 只更新 serverId 与 status，不替换本地 id（保持 React key 稳定，避免重挂载闪烁）
         setMessages((prev) =>
           prev.map((m) =>
             m.id === localAssistantId && m.status !== "pending_confirm"
-              ? { ...m, id: event.message_id, status: "complete" }
+              ? { ...m, serverId: event.message_id, status: "complete" as const }
               : m,
           ),
         );
