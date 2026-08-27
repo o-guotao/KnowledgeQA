@@ -5,6 +5,7 @@ from sqlalchemy import DateTime, ForeignKey, Integer, String, Text, func
 from sqlalchemy.orm import Mapped, mapped_column
 
 from app.db import Base
+from app.storage_compat import UUIDType
 
 # uploaded -> processing -> ready / failed
 DOCUMENT_STATUSES = ("uploaded", "processing", "ready", "failed")
@@ -13,8 +14,8 @@ DOCUMENT_STATUSES = ("uploaded", "processing", "ready", "failed")
 class Document(Base):
     __tablename__ = "documents"
 
-    id: Mapped[uuid.UUID] = mapped_column(primary_key=True, default=uuid.uuid4)
-    user_id: Mapped[uuid.UUID] = mapped_column(ForeignKey("users.id", ondelete="CASCADE"), index=True)
+    id: Mapped[uuid.UUID] = mapped_column(UUIDType(), primary_key=True, default=uuid.uuid4)
+    user_id: Mapped[uuid.UUID] = mapped_column(UUIDType(), ForeignKey("users.id", ondelete="CASCADE"), index=True)
     filename: Mapped[str] = mapped_column(String(256))
     object_key: Mapped[str] = mapped_column(String(512))
     status: Mapped[str] = mapped_column(String(16), default="uploaded", index=True)

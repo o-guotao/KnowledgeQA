@@ -50,6 +50,20 @@ export function useChatStream(): ChatStream {
         const reader = response.body.getReader();
         const decoder = new TextDecoder();
         let buffer = "";
+        const processBlocks = (text: string) => {
+          for (const line of text.split("\n")) {
+            if (!line.startsWith("data:")) continue;
+            let raw: unknown;
+            try {
+              raw = JSON.parse(line.slice(5).trim());
+            } catch {
+              console.error("SSE line is not JSON", line);
+              continue;
+            }
+            const event = parseChatEvent(raw);
+            if (event) handlers.onEvent(event);
+          }
+        };
         for (;;) {
           const { done, value } = await reader.read();
           if (done) break;
@@ -58,19 +72,12 @@ export function useChatStream(): ChatStream {
           const blocks = buffer.split("\n\n");
           buffer = blocks.pop() ?? "";
           for (const block of blocks) {
-            for (const line of block.split("\n")) {
-              if (!line.startsWith("data:")) continue;
-              let raw: unknown;
-              try {
-                raw = JSON.parse(line.slice(5).trim());
-              } catch {
-                console.error("SSE line is not JSON", line);
-                continue;
-              }
-              const event = parseChatEvent(raw);
-              if (event) handlers.onEvent(event);
-            }
+            processBlocks(block);
           }
+        }
+        // 流结束后处理残留 buffer（最后一个事件可能没有结尾的 \n\n）
+        if (buffer.trim()) {
+          processBlocks(buffer);
         }
       } catch (err) {
         if (err instanceof DOMException && err.name === "AbortError") {

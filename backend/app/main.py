@@ -34,18 +34,32 @@ app.include_router(api_router)
 async def _startup_checks() -> None:
     """启动时校验 embedding 维度与配置一致，避免运行时写入 vector 列才报错。
 
+    sqlite 模式跳过 alembic，直接 create_all 建表（本地演示）。
     校验失败应 fail fast：模型加载需要时间，但维度错配是配置错误，
     应在服务对外可访问前暴露，而非首条提问时才报晦涩的 type error。
     """
+    import logging
+
+    log = logging.getLogger(__name__)
+
+    # sqlite 本地模式：用 metadata.create_all 代替 alembic 迁移
+    if settings.db_backend == "sqlite":
+        from app.db import Base, engine
+        import app.models  # noqa: F401 确保全部模型已注册
+
+        async with engine.begin() as conn:
+            await conn.run_sync(Base.metadata.create_all)
+        log.info("sqlite mode: tables created via metadata.create_all")
+        # 本地模式自动 seed 演示账号
+        from scripts.seed import seed
+        await seed()
+
     try:
         from app.services.embedding import verify_dimension
 
         await verify_dimension()
     except Exception as exc:
-        # 仅记日志不阻断启动：embedding 失败时 chat 会降级为空召回，文档仍可上传
-        # 但 worker 处理会失败——由 worker 自行报错更明确。
-        import logging
-        logging.getLogger(__name__).warning(
+        log.warning(
             "embedding dimension verify failed at startup: %s", exc,
             extra={"event": "embedding_verify_failed"},
         )

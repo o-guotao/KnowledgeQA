@@ -176,11 +176,12 @@ export function ChatPage() {
             ),
           ),
       });
-      // abort 路径：仍处本地流式态则标记已停止
+      // 流结束后兜底：仍处 local_streaming 态说明没收到 done/error 事件
+      // （可能 SSE 流提前关闭或后端异常未发 error），标记为 failed 而非 aborted
       setMessages((prev) =>
         prev.map((m) =>
           m.id === assistantLocalId && m.status === "local_streaming"
-            ? { ...m, status: "aborted" }
+            ? { ...m, status: "failed", error: "回答未正常完成，可能未配置 DEEPSEEK_API_KEY" }
             : m,
         ),
       );

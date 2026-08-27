@@ -1,4 +1,10 @@
-"""RAG 召回：按用户隔离的向量相似度检索。"""
+"""RAG 召回：按用户隔离的向量相似度检索。
+
+postgresql 模式用 pgvector 的 <=> 余弦距离 SQL 运算；
+sqlite 模式（本地无 Docker 演示）退化为 Python 端余弦计算——
+数据量小（演示场景）可接受，生产必须用 postgresql 模式。
+"""
+import math
 import uuid
 from dataclasses import dataclass
 
@@ -19,10 +25,50 @@ class RetrievedChunk:
     score: float
 
 
+def _cosine_similarity(a: list[float], b: list[float]) -> float:
+    if not a or not b or len(a) != len(b):
+        return 0.0
+    dot = sum(x * y for x, y in zip(a, b, strict=True))
+    na = math.sqrt(sum(x * x for x in a))
+    nb = math.sqrt(sum(y * y for y in b))
+    if na == 0 or nb == 0:
+        return 0.0
+    return dot / (na * nb)
+
+
 async def retrieve(
     db: AsyncSession, user_id: uuid.UUID, query_embedding: list[float], top_k: int | None = None
 ) -> list[RetrievedChunk]:
     k = top_k or get_settings().rag_top_k
+    settings = get_settings()
+
+    if settings.db_backend == "sqlite":
+        # 本地模式：拉所有该用户的 ready 文档块，Python 端算余弦相似度排序
+        stmt = (
+            select(Chunk, Document.filename)
+            .join(Document, Chunk.document_id == Document.id)
+            .where(Chunk.user_id == user_id, Document.status == "ready")
+        )
+        rows = (await db.execute(stmt)).all()
+        scored = []
+        for chunk, filename in rows:
+            emb = chunk.embedding or []
+            score = _cosine_similarity(query_embedding, emb)
+            scored.append((chunk, filename, score))
+        scored.sort(key=lambda x: x[2], reverse=True)
+        scored = scored[:k]
+        return [
+            RetrievedChunk(
+                chunk_id=chunk.id,
+                document_id=chunk.document_id,
+                document_name=filename,
+                content=chunk.content,
+                score=round(score, 4),
+            )
+            for chunk, filename, score in scored
+        ]
+
+    # postgresql 模式：pgvector 余弦距离 SQL 运算
     distance = Chunk.embedding.cosine_distance(query_embedding).label("distance")
     stmt = (
         select(Chunk, Document.filename, distance)

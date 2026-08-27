@@ -9,8 +9,12 @@ class Settings(BaseSettings):
 
     # 数据库
     database_url: str = "postgresql+asyncpg://webagent:webagent_secret@localhost:5432/webagent"
+    # 本地演示模式：sqlite（无 Postgres/pgvector 时启用，生产用 postgresql）
+    db_backend: str = "postgresql"  # postgresql | sqlite
 
     # 对象存储
+    storage_backend: str = "minio"  # minio | local
+    local_storage_dir: str = "./.local_storage"
     minio_endpoint: str = "localhost:9000"
     minio_root_user: str = "minioadmin"
     minio_root_password: str = "minioadmin123"

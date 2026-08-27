@@ -23,17 +23,27 @@ logger = logging.getLogger("worker")
 async def reap_stuck_running(settings) -> int:
     """回收卡死的 running 任务：started_at 早于 timeout 的判为僵尸，
     重置为 failed 交由退避重试/死信流程处理。覆盖 worker 崩溃/OOM/断电场景。"""
+    threshold_seconds = settings.task_timeout_seconds * 2
     async with SessionLocal() as db:
-        result = await db.execute(
-            text(
+        if settings.db_backend == "sqlite":
+            # sqlite 无 left()/make_interval()/now()，用 substr/datetime/julianday
+            sql = """
+                UPDATE tasks SET status = 'failed',
+                    error = substr(COALESCE(error,'') || ' | reaped: stuck running', 1, 500)
+                WHERE status = 'running'
+                  AND started_at < datetime('now', :neg || ' seconds')
                 """
-                UPDATE tasks SET status = 'failed', error = left(error || ' | ', 500) || 'reaped: stuck running'
+            params = {"neg": "-" + str(int(threshold_seconds))}
+        else:
+            # postgresql: 原生函数
+            sql = """
+                UPDATE tasks SET status = 'failed',
+                    error = left(error || ' | ', 500) || 'reaped: stuck running'
                 WHERE status = 'running'
                   AND started_at < now() - make_interval(secs => :timeout)
                 """
-            ),
-            {"timeout": settings.task_timeout_seconds * 2},
-        )
+            params = {"timeout": threshold_seconds}
+        result = await db.execute(text(sql), params)
         if result.rowcount:
             await db.commit()
             logger.warning(
@@ -44,30 +54,60 @@ async def reap_stuck_running(settings) -> int:
 
 
 async def claim_task() -> Task | None:
-    """FOR UPDATE SKIP LOCKED 抢占一条到期任务，避免多 worker 重复执行。"""
+    """抢占一条到期任务。
+
+    postgresql 模式：FOR UPDATE SKIP LOCKED 保证多 worker 不重复领取（生产用）。
+    sqlite 模式：单 worker 演示，SELECT-then-UPDATE 即可（无并发竞态）。
+    """
+    settings = get_settings()
     async with SessionLocal() as db:
-        row = (
-            await db.execute(
-                text(
-                    """
-                    UPDATE tasks SET status = 'running', started_at = now()
-                    WHERE id = (
+        if settings.db_backend == "sqlite":
+            row = (
+                await db.execute(
+                    text(
+                        """
                         SELECT id FROM tasks
-                        WHERE status IN ('pending', 'failed') AND next_run_at <= now()
+                        WHERE status IN ('pending', 'failed')
+                          AND next_run_at <= datetime('now')
                         ORDER BY next_run_at
-                        FOR UPDATE SKIP LOCKED
                         LIMIT 1
+                        """
                     )
-                    RETURNING id
-                    """
                 )
+            ).first()
+            if row is None:
+                await db.commit()
+                return None
+            await db.execute(
+                text("UPDATE tasks SET status='running', started_at=datetime('now') WHERE id=:id"),
+                {"id": str(row[0])},
             )
-        ).first()
-        await db.commit()
-        if row is None:
-            return None
+            await db.commit()
+            task_id = row[0]
+        else:
+            row = (
+                await db.execute(
+                    text(
+                        """
+                        UPDATE tasks SET status = 'running', started_at = now()
+                        WHERE id = (
+                            SELECT id FROM tasks
+                            WHERE status IN ('pending', 'failed') AND next_run_at <= now()
+                            ORDER BY next_run_at
+                            FOR UPDATE SKIP LOCKED
+                            LIMIT 1
+                        )
+                        RETURNING id
+                        """
+                    )
+                )
+            ).first()
+            await db.commit()
+            if row is None:
+                return None
+            task_id = row[0]
     async with SessionLocal() as db:
-        return await db.get(Task, row[0])
+        return await db.get(Task, task_id)
 
 
 async def ingest_document(document_id: uuid.UUID) -> None:
@@ -97,7 +137,7 @@ async def ingest_document(document_id: uuid.UUID) -> None:
         vectors = await embed_texts([p.content for p in pieces])
 
         await db.execute(
-            text("DELETE FROM chunks WHERE document_id = :did"), {"did": document_id}
+            text("DELETE FROM chunks WHERE document_id = :did"), {"did": str(document_id)}
         )
         for piece, vector in zip(pieces, vectors, strict=True):
             db.add(Chunk(
@@ -202,6 +242,17 @@ async def loop() -> None:
 
 def main() -> None:
     configure_logging()
+    settings = get_settings()
+    # sqlite 本地模式：worker 独立进程，需自行建表（main.py 已建但 worker 可能先启动）
+    if settings.db_backend == "sqlite":
+        import asyncio
+        from app.db import Base, engine
+        import app.models  # noqa: F401
+
+        async def _create():
+            async with engine.begin() as conn:
+                await conn.run_sync(Base.metadata.create_all)
+        asyncio.run(_create())
     asyncio.run(loop())
 
 

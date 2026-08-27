@@ -20,16 +20,23 @@ export function DocumentManager() {
   const fileRef = useRef<HTMLInputElement>(null);
 
   const refresh = useCallback(() => {
-    get("/documents", z.array(DocumentSchema))
+    return get("/documents", z.array(DocumentSchema))
       .then(setDocs)
       .catch((err) => console.error("documents fetch failed", err));
   }, []);
 
+  // 首次加载
   useEffect(() => {
-    refresh();
-    const timer = setInterval(refresh, 5_000);
-    return () => clearInterval(timer);
+    void refresh();
   }, [refresh]);
+
+  // 有未就绪文档时才轮询；全部 ready 后停止（减少无效请求）
+  const hasPending = docs.some((d) => d.status === "uploaded" || d.status === "processing");
+  useEffect(() => {
+    if (!hasPending) return;
+    const timer = setInterval(() => void refresh(), 3_000);
+    return () => clearInterval(timer);
+  }, [hasPending, refresh]);
 
   const upload = async (file: File) => {
     setUploading(true);
