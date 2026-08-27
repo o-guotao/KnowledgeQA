@@ -1,0 +1,48 @@
+@tailwind base;
+@tailwind components;
+@tailwind utilities;
+
+@layer base {
+  html {
+    @apply antialiased;
+  }
+  body {
+    @apply bg-surface text-ink font-sans;
+  }
+}
+
+@layer components {
+  .glass {
+    @apply bg-white/70 backdrop-blur-xl border border-white/40 shadow-xl;
+  }
+  .scrollbar-thin::-webkit-scrollbar {
+    width: 6px;
+    height: 6px;
+  }
+  .scrollbar-thin::-webkit-scrollbar-thumb {
+    @apply bg-slate-300 rounded-full;
+  }
+}
+
+.markdown-body p {
+  @apply my-2 leading-relaxed;
+}
+.markdown-body ul,
+.markdown-body ol {
+  @apply my-2 pl-5;
+}
+.markdown-body ul {
+  @apply list-disc;
+}
+.markdown-body ol {
+  @apply list-decimal;
+}
+.markdown-body code {
+  @apply rounded bg-slate-100 px-1 py-0.5 text-[13px] text-rose-600;
+}
+.markdown-body pre {
+  @apply my-2 overflow-x-auto rounded-lg bg-slate-900 p-3 text-[13px] text-slate-100;
+}
+.markdown-body pre code {
+  @apply bg-transparent p-0 text-slate-100;
+}

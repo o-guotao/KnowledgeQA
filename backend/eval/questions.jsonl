@@ -1,0 +1,30 @@
+{"q": "工龄满5年不满10年的员工，年假有几天？", "gold_doc": "员工手册.md", "gold_keywords": ["10"]}
+{"q": "年假最多可以结转几天到次年？", "gold_doc": "员工手册.md", "gold_keywords": ["3"]}
+{"q": "申请年假需要提前几个工作日？", "gold_doc": "员工手册.md", "gold_keywords": ["3"]}
+{"q": "每月有几天无需证明的带薪病假？", "gold_doc": "员工手册.md", "gold_keywords": ["1"]}
+{"q": "加班调休需要在多久之内用完？", "gold_doc": "员工手册.md", "gold_keywords": ["6个月", "6 个月"]}
+{"q": "一线城市普通员工住宿报销标准是每晚多少元？", "gold_doc": "员工手册.md", "gold_keywords": ["450"]}
+{"q": "报销必须在费用发生后多少天内提交？", "gold_doc": "员工手册.md", "gold_keywords": ["30"]}
+{"q": "远程办公每周最多几天？实习生适用弹性工作制吗？", "gold_doc": "员工手册.md", "gold_keywords": ["2", "不适用"]}
+{"q": "星图平台是什么？提供哪四类核心功能？", "gold_doc": "产品FAQ.md", "gold_keywords": ["报表查询", "自助取数"]}
+{"q": "外包人员如何申请星图账号？", "gold_doc": "产品FAQ.md", "gold_keywords": ["权限中心", "正式员工"]}
+{"q": "L2 内部数据的报表权限需要谁审批？多久完成？", "gold_doc": "产品FAQ.md", "gold_keywords": ["主管", "2"]}
+{"q": "交易域报表的更新时效是怎样的？", "gold_doc": "产品FAQ.md", "gold_keywords": ["T+1"]}
+{"q": "供应链库存数据的延迟大约是多少？", "gold_doc": "产品FAQ.md", "gold_keywords": ["10分钟", "10 分钟"]}
+{"q": "星图中 GMV 的口径包含运费和退款吗？", "gold_doc": "产品FAQ.md", "gold_keywords": ["不含运费", "不扣除退款"]}
+{"q": "查询报错 QUERY_MEMORY_LIMIT 应该怎么处理？", "gold_doc": "产品FAQ.md", "gold_keywords": ["日期", "分区"]}
+{"q": "在线导出 Excel 单次上限多少行？超出后怎么办？", "gold_doc": "产品FAQ.md", "gold_keywords": ["10万", "异步导出"]}
+{"q": "内部系统口令最少多少位？多久强制更换一次？", "gold_doc": "安全规范.md", "gold_keywords": ["12", "90"]}
+{"q": "发现账号异常登录提醒后，需要在多久内上报？", "gold_doc": "安全规范.md", "gold_keywords": ["30分钟", "30 分钟"]}
+{"q": "办公电脑屏幕锁定时间要求不超过几分钟？", "gold_doc": "安全规范.md", "gold_keywords": ["5"]}
+{"q": "临时查询生产数据库的授权最长多久？", "gold_doc": "安全规范.md", "gold_keywords": ["4小时", "4 小时"]}
+{"q": "公司数据分为哪几个密级？L3 数据能发到个人邮箱吗？", "gold_doc": "安全规范.md", "gold_keywords": ["L1", "L4", "禁止"]}
+{"q": "发生数据泄露疑似事件要在多久内报告？值班电话是多少？", "gold_doc": "安全规范.md", "gold_keywords": ["1小时", "400-800-9000"]}
+{"q": "含 L3 数据的文档外发需要什么流程？", "gold_doc": "安全规范.md", "gold_keywords": ["审批", "水印"]}
+{"q": "新员工入职可以领取哪些办公设备？", "gold_doc": "IT服务指南.md", "gold_keywords": ["MacBook", "显示器"]}
+{"q": "办公设备多久可以申请换新一次？", "gold_doc": "IT服务指南.md", "gold_keywords": ["3年", "3 年"]}
+{"q": "P1 级工单的响应和恢复时限分别是多少？", "gold_doc": "IT服务指南.md", "gold_keywords": ["15分钟", "2小时"]}
+{"q": "VPN 账号类问题走什么通道？平均处理时长？", "gold_doc": "IT服务指南.md", "gold_keywords": ["极速通道", "20分钟"]}
+{"q": "设计岗位可以申请哪些软件的 license？", "gold_doc": "IT服务指南.md", "gold_keywords": ["Figma", "Adobe"]}
+{"q": "彩色打印每页多少钱？", "gold_doc": "IT服务指南.md", "gold_keywords": ["0.5"]}
+{"q": "晚婚员工的婚假一共多少天？", "gold_doc": "员工手册.md", "gold_keywords": ["3", "7"]}

@@ -1,0 +1,104 @@
+services:
+  db:
+    image: pgvector/pgvector:pg16
+    container_name: web-agent-db
+    environment:
+      POSTGRES_USER: ${POSTGRES_USER:-webagent}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-webagent_secret}
+      POSTGRES_DB: ${POSTGRES_DB:-webagent}
+    ports:
+      - "5432:5432"
+    volumes:
+      - pgdata:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U ${POSTGRES_USER:-webagent} -d ${POSTGRES_DB:-webagent}"]
+      interval: 5s
+      timeout: 3s
+      retries: 20
+
+  minio:
+    image: minio/minio:latest
+    container_name: web-agent-minio
+    command: server /data --console-address ":9001"
+    environment:
+      MINIO_ROOT_USER: ${MINIO_ROOT_USER:-minioadmin}
+      MINIO_ROOT_PASSWORD: ${MINIO_ROOT_PASSWORD:-minioadmin123}
+    ports:
+      - "9000:9000"
+      - "9001:9001"
+    volumes:
+      - miniodata:/data
+    healthcheck:
+      test: ["CMD", "mc", "ready", "local"]
+      interval: 5s
+      timeout: 3s
+      retries: 20
+
+  minio-init:
+    image: minio/mc:latest
+    container_name: web-agent-minio-init
+    depends_on:
+      minio:
+        condition: service_healthy
+    entrypoint: >
+      /bin/sh -c "
+      mc alias set local http://minio:9000 $${MINIO_ROOT_USER} $${MINIO_ROOT_PASSWORD};
+      mc mb -p local/${MINIO_BUCKET:-web-agent-docs};
+      exit 0;
+      "
+    environment:
+      MINIO_ROOT_USER: ${MINIO_ROOT_USER:-minioadmin}
+      MINIO_ROOT_PASSWORD: ${MINIO_ROOT_PASSWORD:-minioadmin123}
+      MINIO_BUCKET: ${MINIO_BUCKET:-web-agent-docs}
+
+  backend:
+    build: ./backend
+    container_name: web-agent-backend
+    command: >
+      sh -c "alembic upgrade head &&
+             python -m scripts.seed &&
+             uvicorn app.main:app --host 0.0.0.0 --port 8000"
+    env_file:
+      - .env
+    environment:
+      DATABASE_URL: postgresql+asyncpg://${POSTGRES_USER:-webagent}:${POSTGRES_PASSWORD:-webagent_secret}@db:5432/${POSTGRES_DB:-webagent}
+      MINIO_ENDPOINT: minio:9000
+      FASTEMBED_CACHE_PATH: /data/models
+    ports:
+      - "8000:8000"
+    volumes:
+      - modelcache:/data/models
+    depends_on:
+      db:
+        condition: service_healthy
+      minio-init:
+        condition: service_completed_successfully
+
+  worker:
+    build: ./backend
+    container_name: web-agent-worker
+    command: python -m worker.main
+    env_file:
+      - .env
+    environment:
+      DATABASE_URL: postgresql+asyncpg://${POSTGRES_USER:-webagent}:${POSTGRES_PASSWORD:-webagent_secret}@db:5432/${POSTGRES_DB:-webagent}
+      MINIO_ENDPOINT: minio:9000
+      FASTEMBED_CACHE_PATH: /data/models
+    volumes:
+      - modelcache:/data/models
+    depends_on:
+      backend:
+        condition: service_started
+
+  frontend:
+    build: ./frontend
+    container_name: web-agent-frontend
+    ports:
+      - "5173:80"
+    depends_on:
+      - backend
+
+volumes:
+  pgdata:
+  miniodata:
+  modelcache:
