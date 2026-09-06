@@ -1,4 +1,4 @@
-import { SendHorizonal, Square } from "lucide-react";
+import { Send, Square } from "lucide-react";
 import { useState } from "react";
 
 import { Button } from "./ui/button";
@@ -49,7 +49,7 @@ export function ChatInput({ streaming, disabled, onSend, onStop }: ChatInputProp
             disabled={disabled || !value.trim()}
             aria-label="发送"
           >
-            <SendHorizonal size={16} />
+            <Send size={16} />
           </Button>
         )}
       </div>

@@ -27,6 +27,14 @@ async def stream_chat(
     payload: dict = {"model": provider.model_name, "messages": messages, "stream": True, "stream_options": {"include_usage": True}}
     if tools:
         payload["tools"] = tools
+    # 推理参数可选：None = 不传，使用模型服务端默认值
+    for key, value in (
+        ("temperature", provider.temperature),
+        ("top_p", provider.top_p),
+        ("max_tokens", provider.max_tokens),
+    ):
+        if value is not None:
+            payload[key] = value
     result = StreamResult()
     timeout = httpx.Timeout(provider.timeout_seconds, connect=10.0)
     last_error: Exception | None = None

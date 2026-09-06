@@ -28,6 +28,7 @@ def to_out(config: ModelConfig) -> ModelConfigOut:
     return ModelConfigOut(
         id=config.id, name=config.name, base_url=config.base_url, model_name=config.model_name,
         api_key_masked=config.api_key_hint, timeout_seconds=config.timeout_seconds,
+        temperature=config.temperature, top_p=config.top_p, max_tokens=config.max_tokens,
         price_input_per_million=config.price_input_per_million,
         price_output_per_million=config.price_output_per_million,
         is_active=config.is_active, created_at=config.created_at, updated_at=config.updated_at,
@@ -53,7 +54,8 @@ async def create_model_config(
     config = ModelConfig(
         user_id=user.id, name=body.name, base_url=base_url, model_name=body.model_name,
         api_key_encrypted=encrypt_api_key(body.api_key), api_key_hint=api_key_hint(body.api_key),
-        timeout_seconds=body.timeout_seconds, price_input_per_million=body.price_input_per_million,
+        timeout_seconds=body.timeout_seconds, temperature=body.temperature, top_p=body.top_p,
+        max_tokens=body.max_tokens, price_input_per_million=body.price_input_per_million,
         price_output_per_million=body.price_output_per_million, is_active=has_config is None,
     )
     db.add(config)
@@ -117,7 +119,9 @@ async def test_model_config(
             from app.services.model_configs import ProviderConfig, decrypt_api_key
             provider = ProviderConfig(
                 base_url=config.base_url, model_name=config.model_name, api_key=decrypt_api_key(config.api_key_encrypted),
-                timeout_seconds=config.timeout_seconds, price_input_per_million=0, price_output_per_million=0,
+                timeout_seconds=config.timeout_seconds, temperature=config.temperature,
+                top_p=config.top_p, max_tokens=config.max_tokens,
+                price_input_per_million=0, price_output_per_million=0,
             )
         await test_provider_connection(provider)
         return ModelConfigTestResult(ok=True, message="连接成功")

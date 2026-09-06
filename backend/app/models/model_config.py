@@ -1,7 +1,7 @@
 import uuid
 from datetime import datetime
 
-from sqlalchemy import Boolean, DateTime, Float, ForeignKey, Index, String, Text, func
+from sqlalchemy import Boolean, DateTime, Float, ForeignKey, Index, Integer, String, Text, func
 from sqlalchemy.orm import Mapped, mapped_column
 
 from app.db import Base
@@ -20,6 +20,10 @@ class ModelConfig(Base):
     api_key_encrypted: Mapped[str] = mapped_column(Text, nullable=False)
     api_key_hint: Mapped[str] = mapped_column(String(512), nullable=False)
     timeout_seconds: Mapped[float] = mapped_column(Float, default=60.0)
+    # 推理参数：None = 交给模型服务端默认
+    temperature: Mapped[float | None] = mapped_column(Float, nullable=True)
+    top_p: Mapped[float | None] = mapped_column(Float, nullable=True)
+    max_tokens: Mapped[int | None] = mapped_column(Integer, nullable=True)
     price_input_per_million: Mapped[float | None] = mapped_column(Float, nullable=True)
     price_output_per_million: Mapped[float | None] = mapped_column(Float, nullable=True)
     is_active: Mapped[bool] = mapped_column(Boolean, default=False, nullable=False)

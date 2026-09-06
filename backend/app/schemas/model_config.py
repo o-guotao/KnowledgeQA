@@ -10,6 +10,9 @@ class ModelConfigCreate(BaseModel):
     model_name: str = Field(min_length=1, max_length=128)
     api_key: str = Field(min_length=1, max_length=512)
     timeout_seconds: float = Field(default=60.0, ge=1, le=300)
+    temperature: float | None = Field(default=None, ge=0, le=2)
+    top_p: float | None = Field(default=None, ge=0, le=1)
+    max_tokens: int | None = Field(default=None, ge=1, le=200_000)
     price_input_per_million: float | None = Field(default=None, ge=0)
     price_output_per_million: float | None = Field(default=None, ge=0)
 
@@ -28,6 +31,9 @@ class ModelConfigUpdate(BaseModel):
     model_name: str | None = Field(default=None, min_length=1, max_length=128)
     api_key: str | None = Field(default=None, min_length=1, max_length=512)
     timeout_seconds: float | None = Field(default=None, ge=1, le=300)
+    temperature: float | None = Field(default=None, ge=0, le=2)
+    top_p: float | None = Field(default=None, ge=0, le=1)
+    max_tokens: int | None = Field(default=None, ge=1, le=200_000)
     price_input_per_million: float | None = Field(default=None, ge=0)
     price_output_per_million: float | None = Field(default=None, ge=0)
 
@@ -39,6 +45,9 @@ class ModelConfigOut(BaseModel):
     model_name: str
     api_key_masked: str
     timeout_seconds: float
+    temperature: float | None
+    top_p: float | None
+    max_tokens: int | None
     price_input_per_million: float | None
     price_output_per_million: float | None
     is_active: bool

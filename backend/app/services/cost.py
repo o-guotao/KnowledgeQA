@@ -77,7 +77,7 @@ async def try_consume_quota(
             UPDATE quotas
             SET prompt_tokens = prompt_tokens + :p,
                 completion_tokens = completion_tokens + :c,
-                cost_cny = round(cost_cny + :cost, 6),
+                cost_cny = round(cast(cost_cny + :cost as numeric), 6),
                 updated_at = now()
             WHERE user_id = :uid
               AND period = :period

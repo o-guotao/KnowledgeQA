@@ -1,7 +1,7 @@
-import { BookOpenText, LogOut, Menu, Settings2, X } from "lucide-react";
+import { BookOpenText, Files, LogOut, Menu, MessageSquare, Settings2, X } from "lucide-react";
 import { useCallback, useEffect, useRef, useState } from "react";
 import { z } from "zod";
-import { useNavigate } from "react-router-dom";
+import { useLocation, useNavigate } from "react-router-dom";
 
 import { del, get, post } from "../api/client";
 import {
@@ -13,7 +13,6 @@ import {
 import { useAuth } from "../auth/AuthContext";
 import { ChatInput } from "../components/ChatInput";
 import { CitationPanel } from "../components/CitationPanel";
-import { DocumentManager } from "../components/DocumentManager";
 import { MessageItem, type DisplayMessage } from "../components/MessageItem";
 import { QuotaBadge } from "../components/QuotaBadge";
 import { SessionList } from "../components/SessionList";
@@ -28,6 +27,7 @@ const nextLocalId = () => `local-${++localId}`;
 export function ChatPage() {
   const { user, logout } = useAuth();
   const navigate = useNavigate();
+  const location = useLocation();
   const [sessions, setSessions] = useState<Session[]>([]);
   const [activeId, setActiveId] = useState<string | null>(null);
   const [messages, setMessages] = useState<DisplayMessage[]>([]);
@@ -210,6 +210,30 @@ export function ChatPage() {
       <aside className={`fixed inset-y-0 left-0 z-30 flex w-80 -translate-x-full flex-col gap-5 overflow-y-auto border-r border-white/10 bg-ink p-4 shadow-2xl transition-transform lg:static lg:w-72 lg:translate-x-0 lg:shadow-none ${sidebarOpen ? "translate-x-0" : ""}`}>
         <div className="flex items-center justify-between px-1 text-white"><div className="flex items-center gap-2 text-lg font-semibold"><BookOpenText size={21} className="text-brand-light" />内知</div><button type="button" className="rounded-md p-1 text-slate-400 hover:bg-white/10 lg:hidden" aria-label="关闭导航" onClick={() => setSidebarOpen(false)}><X size={18} /></button></div>
         <p className="-mt-3 px-1 text-xs text-slate-500">KnowledgeQA · 内部知识助手</p>
+        <nav className="flex flex-col gap-1 border-b border-white/10 pb-3" aria-label="主导航">
+          {[
+            { label: "对话", to: "/", icon: MessageSquare },
+            { label: "文档库", to: "/documents", icon: Files },
+            { label: "模型设置", to: "/settings/models", icon: Settings2 },
+          ].map(({ label, to, icon: Icon }) => {
+            const active = location.pathname === to;
+            return (
+              <button
+                key={to}
+                type="button"
+                onClick={() => {
+                  setSidebarOpen(false);
+                  navigate(to);
+                }}
+                aria-current={active ? "page" : undefined}
+                className={`flex items-center gap-2.5 rounded-md px-2.5 py-2 text-left text-sm cursor-pointer transition-colors ${active ? "bg-white/10 font-medium text-white" : "text-slate-400 hover:bg-white/5 hover:text-white"}`}
+              >
+                <Icon size={16} className="shrink-0" />
+                {label}
+              </button>
+            );
+          })}
+        </nav>
         <SessionList
           sessions={sessions}
           activeId={activeId}
@@ -217,34 +241,21 @@ export function ChatPage() {
           onCreate={() => void createSession()}
           onDelete={(id) => void deleteSession(id)}
         />
-        <div className="mt-auto space-y-4">
-          <DocumentManager />
-          <div className="flex items-center justify-between border-t border-white/10 pt-3">
-            <div className="text-xs text-slate-400">
-              {user?.display_name || user?.username}
-              <div className="mt-1">
-                <QuotaBadge refreshKey={quotaRefreshKey} />
-              </div>
-            </div>
-            <div className="flex items-center gap-1">
-              <button
-                type="button"
-                onClick={() => navigate("/settings/models")}
-                aria-label="模型配置"
-                className="rounded-md p-1.5 text-slate-400 hover:bg-white/10 hover:text-white cursor-pointer"
-              >
-                <Settings2 size={16} />
-              </button>
-              <button
-              type="button"
-              onClick={logout}
-              aria-label="退出登录"
-              className="rounded-md p-1.5 text-slate-400 hover:bg-white/10 hover:text-white cursor-pointer"
-            >
-              <LogOut size={16} />
-            </button>
+        <div className="mt-auto flex items-center justify-between border-t border-white/10 px-1 pt-3">
+          <div className="text-xs text-slate-400">
+            {user?.display_name || user?.username}
+            <div className="mt-1">
+              <QuotaBadge refreshKey={quotaRefreshKey} />
             </div>
           </div>
+          <button
+            type="button"
+            onClick={logout}
+            aria-label="退出登录"
+            className="rounded-md p-1.5 text-slate-400 hover:bg-white/10 hover:text-white cursor-pointer"
+          >
+            <LogOut size={16} />
+          </button>
         </div>
       </aside>
 

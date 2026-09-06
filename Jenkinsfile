@@ -99,13 +99,16 @@ pipeline {
                 }
                 
                 // 健康检查（增加等待时间）
+                // 注意：Docker Desktop on Windows 下 localhost 优先解析为 ::1，
+                // 会被 wslrelay 在 [::1] 上的同名端口转发遮蔽（曾导致持续 32s 超时 + 拒绝访问）。
+                // 显式用 127.0.0.1 走容器发布在 0.0.0.0 的 IPv4 端口，稳定可靠。
                 script {
                     echo '等待服务启动...'
                     sleep time: 30, unit: 'SECONDS'
-                    
+
                     retry(18) {
                         sleep time: 10, unit: 'SECONDS'
-                        bat 'powershell -NoProfile -Command "Invoke-WebRequest -UseBasicParsing http://localhost:8000/api/healthz | Out-Null; Invoke-WebRequest -UseBasicParsing http://localhost:5173/ | Out-Null"'
+                        bat 'powershell -NoProfile -Command "$ErrorActionPreference=\'Stop\'; Invoke-WebRequest -UseBasicParsing -TimeoutSec 10 http://127.0.0.1:8000/api/healthz | Out-Null; Invoke-WebRequest -UseBasicParsing -TimeoutSec 10 http://127.0.0.1:5173/ | Out-Null"'
                     }
                     echo '✅ 服务已启动，健康检查通过！'
                 }

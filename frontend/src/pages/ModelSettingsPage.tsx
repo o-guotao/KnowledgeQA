@@ -11,20 +11,27 @@ import { Input } from "../components/ui/input";
 
 type Draft = {
   name: string; base_url: string; model_name: string; api_key: string; timeout_seconds: string;
+  temperature: string; top_p: string; max_tokens: string;
   price_input_per_million: string; price_output_per_million: string;
 };
 
 const emptyDraft = (): Draft => ({
   name: "", base_url: "https://api.deepseek.com", model_name: "deepseek-chat", api_key: "",
-  timeout_seconds: "60", price_input_per_million: "", price_output_per_million: "",
+  timeout_seconds: "60", temperature: "", top_p: "", max_tokens: "",
+  price_input_per_million: "", price_output_per_million: "",
 });
+
+const optionalNumber = (raw: string) => (raw.trim() === "" ? null : Number(raw));
 
 function payload(draft: Draft) {
   return {
     name: draft.name, base_url: draft.base_url, model_name: draft.model_name, api_key: draft.api_key,
     timeout_seconds: Number(draft.timeout_seconds),
-    price_input_per_million: draft.price_input_per_million ? Number(draft.price_input_per_million) : null,
-    price_output_per_million: draft.price_output_per_million ? Number(draft.price_output_per_million) : null,
+    temperature: optionalNumber(draft.temperature),
+    top_p: optionalNumber(draft.top_p),
+    max_tokens: optionalNumber(draft.max_tokens),
+    price_input_per_million: optionalNumber(draft.price_input_per_million),
+    price_output_per_million: optionalNumber(draft.price_output_per_million),
   };
 }
 
@@ -62,7 +69,7 @@ export function ModelSettingsPage() {
 
   const edit = (config: ModelConfig) => {
     setEditingId(config.id);
-    setDraft({ name: config.name, base_url: config.base_url, model_name: config.model_name, api_key: "", timeout_seconds: String(config.timeout_seconds), price_input_per_million: config.price_input_per_million === null ? "" : String(config.price_input_per_million), price_output_per_million: config.price_output_per_million === null ? "" : String(config.price_output_per_million) });
+    setDraft({ name: config.name, base_url: config.base_url, model_name: config.model_name, api_key: "", timeout_seconds: String(config.timeout_seconds), temperature: config.temperature === null ? "" : String(config.temperature), top_p: config.top_p === null ? "" : String(config.top_p), max_tokens: config.max_tokens === null ? "" : String(config.max_tokens), price_input_per_million: config.price_input_per_million === null ? "" : String(config.price_input_per_million), price_output_per_million: config.price_output_per_million === null ? "" : String(config.price_output_per_million) });
     setError(null); setMessage(null); window.scrollTo({ top: 0, behavior: "smooth" });
   };
 
@@ -99,7 +106,9 @@ export function ModelSettingsPage() {
             <label className="space-y-1.5 text-sm font-medium sm:col-span-2">Base URL（仅 HTTPS 公网地址）<Input value={draft.base_url} placeholder="https://api.example.com/v1" onChange={(e) => update("base_url", e.target.value)} /></label>
             <label className="space-y-1.5 text-sm font-medium sm:col-span-2">API Key<Input type="password" autoComplete="off" value={draft.api_key} placeholder={editingId ? "留空以保留当前密钥" : "仅保存时使用"} onChange={(e) => update("api_key", e.target.value)} /></label>
             <label className="space-y-1.5 text-sm font-medium">超时（秒）<Input type="number" min="1" max="300" value={draft.timeout_seconds} onChange={(e) => update("timeout_seconds", e.target.value)} /></label>
-            <div className="hidden sm:block" />
+            <label className="space-y-1.5 text-sm font-medium">采样温度（0–2，可选）<Input type="number" min="0" max="2" step="0.1" placeholder="服务端默认" value={draft.temperature} onChange={(e) => update("temperature", e.target.value)} /></label>
+            <label className="space-y-1.5 text-sm font-medium">核采样 top_p（0–1，可选）<Input type="number" min="0" max="1" step="0.05" placeholder="服务端默认" value={draft.top_p} onChange={(e) => update("top_p", e.target.value)} /></label>
+            <label className="space-y-1.5 text-sm font-medium">最大输出 tokens（可选）<Input type="number" min="1" step="1" placeholder="服务端默认，如 2048" value={draft.max_tokens} onChange={(e) => update("max_tokens", e.target.value)} /></label>
             <label className="space-y-1.5 text-sm font-medium">输入单价（元/百万 tokens，可选）<Input type="number" min="0" value={draft.price_input_per_million} onChange={(e) => update("price_input_per_million", e.target.value)} /></label>
             <label className="space-y-1.5 text-sm font-medium">输出单价（元/百万 tokens，可选）<Input type="number" min="0" value={draft.price_output_per_million} onChange={(e) => update("price_output_per_million", e.target.value)} /></label>
             <div className="flex gap-2 sm:col-span-2"><Button disabled={saving || !draft.name || !draft.base_url || !draft.model_name || (!editingId && !draft.api_key)} onClick={() => void save()}>{saving ? <Loader2 className="animate-spin" size={16} /> : <Save size={16} />}{saving ? "保存中…" : editingId ? "保存修改" : "加密保存配置"}</Button>{editingId && <Button variant="ghost" onClick={() => { setEditingId(null); setDraft(emptyDraft()); }}><X size={16} />取消编辑</Button>}</div>
@@ -108,7 +117,7 @@ export function ModelSettingsPage() {
         <section className="space-y-3"><h2 className="text-lg font-semibold">已保存的配置</h2>
           {configs.length === 0 ? <Card><CardContent className="py-10 text-center text-sm text-muted">尚未配置模型。添加并保存后即可用于问答。</CardContent></Card> : configs.map((config) => (
             <Card key={config.id} className={config.is_active ? "border-brand/40 ring-1 ring-brand/10" : ""}><CardContent className="flex flex-col gap-4 py-5 sm:flex-row sm:items-center sm:justify-between">
-              <div><div className="flex items-center gap-2 font-medium text-ink">{config.name}{config.is_active && <span className="inline-flex items-center gap-1 rounded-full bg-brand/10 px-2 py-0.5 text-xs text-brand"><CheckCircle2 size={12} />当前使用</span>}</div><p className="mt-1 text-sm text-muted">{config.model_name} · {config.base_url}</p><p className="mt-1 font-mono text-xs text-slate-400">{config.api_key_masked}</p></div>
+              <div><div className="flex items-center gap-2 font-medium text-ink">{config.name}{config.is_active && <span className="inline-flex items-center gap-1 rounded-full bg-brand/10 px-2 py-0.5 text-xs text-brand"><CheckCircle2 size={12} />当前使用</span>}</div><p className="mt-1 text-sm text-muted">{config.model_name} · {config.base_url}</p>{(config.temperature !== null || config.top_p !== null || config.max_tokens !== null) && <p className="mt-1 text-xs text-slate-400">温度 {config.temperature ?? "默认"} · top_p {config.top_p ?? "默认"} · max_tokens {config.max_tokens ?? "默认"}</p>}<p className="mt-1 font-mono text-xs text-slate-400">{config.api_key_masked}</p></div>
               <div className="flex flex-wrap gap-2"><Button size="sm" variant="outline" onClick={() => void test(config.id)}><Wifi size={14} />测试</Button><Button size="sm" variant="outline" onClick={() => edit(config)}><Pencil size={14} />编辑</Button>{!config.is_active && <Button size="sm" onClick={() => void activate(config.id)}>设为当前</Button>}<Button size="sm" variant="ghost" className="text-red-600 hover:bg-red-50 hover:text-red-700" aria-label={`删除 ${config.name}`} onClick={() => void remove(config.id)}><Trash2 size={15} /></Button></div>
             </CardContent></Card>
           ))}

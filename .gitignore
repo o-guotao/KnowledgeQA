@@ -27,3 +27,6 @@ Thumbs.db
 # Evidence artifacts generated at runtime
 backend/eval/results/
 frontend/openapi.json
+
+
+error.txt

@@ -1,3 +1,4 @@
+import logging
 import uuid
 
 from fastapi import APIRouter, Depends, UploadFile
@@ -14,7 +15,9 @@ from app.models.document import Document
 from app.models.task import Task
 from app.models.user import User
 from app.schemas.document import ChunkOut, DocumentOut
-from app.services.storage import put_object
+from app.services.storage import delete_object, put_object
+
+logger = logging.getLogger(__name__)
 
 router = APIRouter()
 
@@ -86,6 +89,47 @@ async def get_document(
     if document is None:
         raise not_found("文档")
     return DocumentOut.model_validate(document)
+
+
+@router.delete("/documents/{document_id}", status_code=204)
+async def delete_document(
+    document_id: uuid.UUID,
+    db: AsyncSession = Depends(get_db),
+    user: User = Depends(get_current_user),
+) -> None:
+    """删除文档：连库删除切块（含 embedding），并清理 MinIO 中的原始文件。"""
+    document = (
+        await db.execute(
+            select(Document).where(Document.id == document_id, Document.user_id == user.id)
+        )
+    ).scalar_one_or_none()
+    if document is None:
+        raise not_found("文档")
+
+    # 取消该文档尚未完成的入库任务（best-effort：当前仓库尚无消费者，通常为空）
+    stale_tasks = (
+        await db.execute(
+            select(Task).where(
+                Task.type == "ingest_document",
+                Task.user_id == user.id,
+                Task.status.in_(("pending", "running", "failed", "dead")),
+            )
+        )
+    ).scalars().all()
+    for task in stale_tasks:
+        if (task.payload or {}).get("document_id") == str(document.id):
+            await db.delete(task)
+
+    # chunks 依赖 FK ondelete=CASCADE，随 document 删除一并连库清理（含 pgvector 向量）
+    object_key = document.object_key
+    await db.delete(document)
+    await db.commit()
+
+    if object_key:
+        try:
+            await delete_object(object_key)
+        except Exception:
+            logger.warning("删除文档对象失败: object_key=%s", object_key, exc_info=True)
 
 
 @router.get("/chunks/{chunk_id}", response_model=ChunkOut)

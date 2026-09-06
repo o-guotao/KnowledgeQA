@@ -23,6 +23,9 @@ class ProviderConfig:
     timeout_seconds: float
     price_input_per_million: float
     price_output_per_million: float
+    temperature: float | None = None
+    top_p: float | None = None
+    max_tokens: int | None = None
 
 
 def _cipher() -> Fernet:
@@ -106,6 +109,9 @@ async def resolve_provider_config(db: AsyncSession, user_id: uuid.UUID) -> Provi
             model_name=config.model_name,
             api_key=decrypt_api_key(config.api_key_encrypted),
             timeout_seconds=config.timeout_seconds,
+            temperature=config.temperature,
+            top_p=config.top_p,
+            max_tokens=config.max_tokens,
             price_input_per_million=(config.price_input_per_million if config.price_input_per_million is not None else settings.deepseek_price_input_per_million),
             price_output_per_million=(config.price_output_per_million if config.price_output_per_million is not None else settings.deepseek_price_output_per_million),
         )
