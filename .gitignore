@@ -12,10 +12,6 @@ node_modules/
 dist/
 *.local
 
-# Env & secrets
-.env
-.deployment.env
-
 # Models & data
 .models/
 *.log
