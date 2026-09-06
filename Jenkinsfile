@@ -15,30 +15,26 @@ pipeline {
         stage('Preflight') {
             steps {
                 script {
-                    // 生成 .env 基础配置
+                    // 检查 .env 文件是否存在，如果不存在则创建
                     bat """
-                        echo POSTGRES_USER=webagent > .env
-                        echo POSTGRES_PASSWORD=webagent_secret >> .env
-                        echo POSTGRES_DB=webagent >> .env
-                        echo MINIO_ROOT_USER=minioadmin >> .env
-                        echo MINIO_ROOT_PASSWORD=minioadmin123 >> .env
-                        echo MINIO_BUCKET=web-agent-docs >> .env
+                        if not exist .env (
+                            echo ========================================
+                            echo 创建 .env 文件...
+                            echo ========================================
+                            echo POSTGRES_USER=webagent > .env
+                            echo POSTGRES_PASSWORD=webagent_secret >> .env
+                            echo POSTGRES_DB=webagent >> .env
+                            echo MINIO_ROOT_USER=minioadmin >> .env
+                            echo MINIO_ROOT_PASSWORD=minioadmin123 >> .env
+                            echo MINIO_BUCKET=web-agent-docs >> .env
+                            echo MODEL_CONFIG_ENCRYPTION_KEY=jFmL8108VYDECAhGp4fEs4q2b4boQ7f32pzKQCxlqt0= >> .env
+                        ) else (
+                            echo ========================================
+                            echo .env 文件已存在，跳过创建
+                            echo ========================================
+                            type .env
+                        )
                     """
-                    
-                    // 尝试从凭据注入加密密钥，如果不存在则使用默认值
-                    try {
-                        withCredentials([string(credentialsId: 'knowledgeqa-model-config-encryption-key', variable: 'MODEL_CONFIG_ENCRYPTION_KEY')]) {
-                            bat """
-                                echo MODEL_CONFIG_ENCRYPTION_KEY=${MODEL_CONFIG_ENCRYPTION_KEY} >> .env
-                            """
-                        }
-                        echo '✅ 使用 Jenkins 凭据注入加密密钥'
-                    } catch (Exception e) {
-                        echo '⚠️ 未找到 knowledgeqa-model-config-encryption-key 凭据，使用默认值'
-                        bat """
-                            echo MODEL_CONFIG_ENCRYPTION_KEY=default-key-12345 >> .env
-                        """
-                    }
                     
                     // 预拉取所有基础镜像
                     bat """
@@ -102,11 +98,13 @@ pipeline {
                     bat 'docker compose up -d --no-build --remove-orphans'
                 }
                 
-                // 健康检查
+                // 健康检查（增加等待时间）
                 script {
                     echo '等待服务启动...'
+                    sleep time: 30, unit: 'SECONDS'
+                    
                     retry(18) {
-                        sleep time: 5, unit: 'SECONDS'
+                        sleep time: 10, unit: 'SECONDS'
                         bat 'powershell -NoProfile -Command "Invoke-WebRequest -UseBasicParsing http://localhost:8000/api/healthz | Out-Null; Invoke-WebRequest -UseBasicParsing http://localhost:5173/ | Out-Null"'
                     }
                     echo '✅ 服务已启动，健康检查通过！'
