@@ -46,14 +46,14 @@ pipeline {
                         echo 预拉取基础镜像...
                         echo ========================================
                         
-                        docker pull registry.cn-hangzhou.aliyuncs.com/library/python:3.12-slim
-                        docker tag registry.cn-hangzhou.aliyuncs.com/library/python:3.12-slim python:3.12-slim
+                        echo 拉取 Python 3.12-slim...
+                        docker pull python:3.12-slim
                         
-                        docker pull registry.cn-hangzhou.aliyuncs.com/library/node:20-alpine
-                        docker tag registry.cn-hangzhou.aliyuncs.com/library/node:20-alpine node:20-alpine
+                        echo 拉取 Node 20-alpine...
+                        docker pull node:20-alpine
                         
-                        docker pull registry.cn-hangzhou.aliyuncs.com/library/nginx:1.27-alpine
-                        docker tag registry.cn-hangzhou.aliyuncs.com/library/nginx:1.27-alpine nginx:1.27-alpine
+                        echo 拉取 Nginx 1.27-alpine...
+                        docker pull nginx:1.27-alpine
                         
                         echo ========================================
                         echo 基础镜像准备完成
