@@ -19,11 +19,14 @@ def current_period() -> str:
     return datetime.now().strftime("%Y-%m")
 
 
-def compute_cost_cny(prompt_tokens: int, completion_tokens: int) -> float:
+def compute_cost_cny(
+    prompt_tokens: int, completion_tokens: int,
+    input_price: float | None = None, output_price: float | None = None,
+) -> float:
     settings = get_settings()
     cost = (
-        prompt_tokens * settings.deepseek_price_input_per_million
-        + completion_tokens * settings.deepseek_price_output_per_million
+        prompt_tokens * (input_price if input_price is not None else settings.deepseek_price_input_per_million)
+        + completion_tokens * (output_price if output_price is not None else settings.deepseek_price_output_per_million)
     ) / 1_000_000
     return round(cost, 6)
 

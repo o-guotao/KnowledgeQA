@@ -1,0 +1,2 @@
+{"file": ".trellis/spec/backend/index.md", "reason": "Backend conventions and quality checklist for configuration API, encryption, migration, and chat integration"}
+{"file": ".trellis/spec/frontend/index.md", "reason": "Frontend conventions and type-safety checklist for typed configuration client and settings page"}

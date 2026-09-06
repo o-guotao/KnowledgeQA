@@ -1,6 +1,6 @@
 from fastapi import APIRouter
 
-from app.api import auth, chat, documents, quotas, sessions, tools
+from app.api import auth, chat, documents, model_configs, quotas, sessions, tools
 
 api_router = APIRouter(prefix="/api")
 api_router.include_router(auth.router, tags=["auth"])
@@ -9,3 +9,4 @@ api_router.include_router(chat.router, tags=["chat"])
 api_router.include_router(documents.router, tags=["documents"])
 api_router.include_router(quotas.router, tags=["quotas"])
 api_router.include_router(tools.router, tags=["tools"])
+api_router.include_router(model_configs.router, tags=["model-configs"])

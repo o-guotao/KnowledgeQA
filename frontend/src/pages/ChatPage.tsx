@@ -1,6 +1,7 @@
-import { LogOut } from "lucide-react";
+import { BookOpenText, LogOut, Menu, Settings2, X } from "lucide-react";
 import { useCallback, useEffect, useRef, useState } from "react";
 import { z } from "zod";
+import { useNavigate } from "react-router-dom";
 
 import { del, get, post } from "../api/client";
 import {
@@ -26,6 +27,7 @@ const nextLocalId = () => `local-${++localId}`;
 
 export function ChatPage() {
   const { user, logout } = useAuth();
+  const navigate = useNavigate();
   const [sessions, setSessions] = useState<Session[]>([]);
   const [activeId, setActiveId] = useState<string | null>(null);
   const [messages, setMessages] = useState<DisplayMessage[]>([]);
@@ -33,6 +35,7 @@ export function ChatPage() {
   const [toolCall, setToolCall] = useState<PendingToolCall | null>(null);
   const [quotaRefreshKey, setQuotaRefreshKey] = useState(0);
   const [quotaExhausted, setQuotaExhausted] = useState(false);
+  const [sidebarOpen, setSidebarOpen] = useState(false);
   const lastQuestionRef = useRef<string>("");
   const bottomRef = useRef<HTMLDivElement>(null);
   const { streaming, send, stop } = useChatStream();
@@ -202,10 +205,11 @@ export function ChatPage() {
   );
 
   return (
-    <div className="flex h-screen overflow-hidden">
-      {/* 深色侧边栏 */}
-      <aside className="flex w-72 shrink-0 flex-col gap-4 overflow-y-auto scrollbar-thin bg-ink p-4">
-        <div className="text-lg font-semibold text-white">内知 · KnowledgeQA</div>
+    <div className="flex h-dvh overflow-hidden bg-slate-50">
+      {sidebarOpen && <button type="button" aria-label="关闭导航" onClick={() => setSidebarOpen(false)} className="fixed inset-0 z-20 bg-slate-950/40 lg:hidden" />}
+      <aside className={`fixed inset-y-0 left-0 z-30 flex w-80 -translate-x-full flex-col gap-5 overflow-y-auto border-r border-white/10 bg-ink p-4 shadow-2xl transition-transform lg:static lg:w-72 lg:translate-x-0 lg:shadow-none ${sidebarOpen ? "translate-x-0" : ""}`}>
+        <div className="flex items-center justify-between px-1 text-white"><div className="flex items-center gap-2 text-lg font-semibold"><BookOpenText size={21} className="text-brand-light" />内知</div><button type="button" className="rounded-md p-1 text-slate-400 hover:bg-white/10 lg:hidden" aria-label="关闭导航" onClick={() => setSidebarOpen(false)}><X size={18} /></button></div>
+        <p className="-mt-3 px-1 text-xs text-slate-500">KnowledgeQA · 内部知识助手</p>
         <SessionList
           sessions={sessions}
           activeId={activeId}
@@ -222,7 +226,16 @@ export function ChatPage() {
                 <QuotaBadge refreshKey={quotaRefreshKey} />
               </div>
             </div>
-            <button
+            <div className="flex items-center gap-1">
+              <button
+                type="button"
+                onClick={() => navigate("/settings/models")}
+                aria-label="模型配置"
+                className="rounded-md p-1.5 text-slate-400 hover:bg-white/10 hover:text-white cursor-pointer"
+              >
+                <Settings2 size={16} />
+              </button>
+              <button
               type="button"
               onClick={logout}
               aria-label="退出登录"
@@ -230,18 +243,23 @@ export function ChatPage() {
             >
               <LogOut size={16} />
             </button>
+            </div>
           </div>
         </div>
       </aside>
 
       {/* 对话主区 */}
-      <main className="flex flex-1 flex-col bg-surface">
-        <div className="flex-1 overflow-y-auto scrollbar-thin px-6 py-6">
+      <main className="flex min-w-0 flex-1 flex-col bg-slate-50">
+        <header className="flex h-16 shrink-0 items-center justify-between border-b border-slate-200/80 bg-white/80 px-4 backdrop-blur-xl sm:px-6">
+          <div className="flex items-center gap-3"><button type="button" aria-label="打开导航" onClick={() => setSidebarOpen(true)} className="rounded-lg p-2 text-slate-600 hover:bg-slate-100 lg:hidden"><Menu size={20} /></button><div><p className="text-sm font-semibold text-ink">知识问答</p><p className="hidden text-xs text-slate-400 sm:block">基于已入库文档生成带引用的回答</p></div></div>
+          <span className="rounded-full bg-emerald-50 px-2.5 py-1 text-xs font-medium text-emerald-700">服务就绪</span>
+        </header>
+        <div className="flex-1 overflow-y-auto scrollbar-thin px-4 py-6 sm:px-6">
           <div className="mx-auto max-w-3xl space-y-6">
             {messages.length === 0 && (
-              <div className="mt-24 text-center text-sm text-slate-400">
-                <p className="text-lg font-medium text-slate-500">开始提问</p>
-                <p className="mt-2">上传文档后，回答将附引用角标，点击可回跳原文</p>
+              <div className="mt-16 rounded-2xl border border-dashed border-slate-300 bg-white px-6 py-12 text-center text-sm text-slate-400 shadow-sm sm:mt-24">
+                <p className="text-xl font-semibold text-ink">从知识库中找到可靠答案</p>
+                <p className="mx-auto mt-2 max-w-md leading-6">上传制度、手册或 FAQ 后直接提问。每条回答都会标出可回溯的原文引用。</p>
               </div>
             )}
             {messages.map((m) => (

@@ -1,0 +1,2 @@
+{"file": ".trellis/spec/backend/index.md", "reason": "Backend quality review for data isolation, secret handling, and migration work"}
+{"file": ".trellis/spec/frontend/index.md", "reason": "Frontend quality review for schema validation and secret-safe UI"}

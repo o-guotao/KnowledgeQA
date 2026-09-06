@@ -16,6 +16,7 @@ from sqlalchemy import select, update
 from sse_starlette.sse import EventSourceResponse
 
 from app.core.security import get_current_user
+from app.core.errors import AppError
 from app.db import SessionLocal
 from app.logging_config import get_trace_id, set_trace_id
 from app.models.message import Message
@@ -31,9 +32,11 @@ from app.schemas.chat import (
     UsageEvent,
 )
 from app.services import cost, injection
-from app.services.deepseek import ModelCallError, ModelTimeoutError, stream_chat
+from app.services.deepseek import ModelCallError, ModelTimeoutError
 from app.services.embedding import embed_query
 from app.services.rag import build_rag_prompt, retrieve
+from app.services.model_configs import ProviderConfig, resolve_provider_config
+from app.services.openai_compatible import stream_chat
 from app.services.tools import REQUIRE_CONFIRM, TOOL_DEFINITIONS, execute_tool, parse_tool_args
 
 logger = logging.getLogger(__name__)
@@ -116,6 +119,8 @@ async def _event_stream(
             assistant_id = assistant.id
 
         history = await _load_history(body.session_id)
+        async with SessionLocal() as db:
+            provider: ProviderConfig = await resolve_provider_config(db, user.id)
 
         # ---- RAG 召回（按用户隔离），失败降级为空召回 ----
         try:
@@ -149,7 +154,7 @@ async def _event_stream(
         for round_no in range(2):
             has_tool_call = False
             async for kind, payload, result in stream_chat(
-                messages, tools=TOOL_DEFINITIONS if round_no == 0 else None
+                provider, messages, tools=TOOL_DEFINITIONS if round_no == 0 else None
             ):
                 if await request.is_disconnected():
                     raise _ClientGone()
@@ -162,7 +167,9 @@ async def _event_stream(
                     accumulated_prompt += p
                     accumulated_completion += c
                     usage = {"prompt_tokens": accumulated_prompt, "completion_tokens": accumulated_completion}
-                    cost_cny_round = cost.compute_cost_cny(p, c)
+                    cost_cny_round = cost.compute_cost_cny(
+                        p, c, provider.price_input_per_million, provider.price_output_per_million
+                    )
                     async with SessionLocal() as db:
                         await cost.accumulate_usage(db, user.id, p, c)
                         await db.commit()
@@ -189,7 +196,7 @@ async def _event_stream(
                             assistant_id, status="pending_confirm", content=result.content,
                             citations=citations,
                             tool_call={"id": pending["id"], "name": pending["name"], "args": args},
-                            usage={**(usage or {}), "cost_cny": cost.compute_cost_cny(accumulated_prompt, accumulated_completion)} if usage else None,
+                            usage={**(usage or {}), "cost_cny": cost.compute_cost_cny(accumulated_prompt, accumulated_completion, provider.price_input_per_million, provider.price_output_per_million)} if usage else None,
                         )
                         yield _sse(ToolCallEvent(
                             trace_id=trace_id, message_id=assistant_id,
@@ -222,7 +229,10 @@ async def _event_stream(
 
         # ---- 正常收尾：汇总 usage 落到消息记录，完成态 ----
         # 费用已在每次 usage 事件到达时累计，此处不再重复累加。
-        cost_cny = cost.compute_cost_cny(accumulated_prompt, accumulated_completion) if usage else 0.0
+        cost_cny = cost.compute_cost_cny(
+            accumulated_prompt, accumulated_completion,
+            provider.price_input_per_million, provider.price_output_per_million,
+        ) if usage else 0.0
         await _finish_message(
             assistant_id, status="complete", content="".join(content_parts),
             citations=citations,
@@ -239,6 +249,9 @@ async def _event_stream(
             yield event
     except ModelCallError as exc:
         async for event in fail("MODEL_ERROR", str(exc), "模型服务异常，请稍后重试"):
+            yield event
+    except AppError as exc:
+        async for event in fail("MODEL_ERROR", exc.message, exc.message):
             yield event
     except Exception as exc:
         logger.exception("chat stream failed", extra={"event": "stream_error"})

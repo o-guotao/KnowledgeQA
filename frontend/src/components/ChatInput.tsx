@@ -22,7 +22,7 @@ export function ChatInput({ streaming, disabled, onSend, onStop }: ChatInputProp
   };
 
   return (
-    <div className="border-t border-slate-200 bg-white/80 backdrop-blur-xl p-4">
+    <div className="border-t border-slate-200 bg-white/90 px-4 py-4 backdrop-blur-xl sm:px-6">
       <div className="mx-auto flex max-w-3xl items-end gap-2">
         <Textarea
           value={value}
@@ -53,6 +53,7 @@ export function ChatInput({ streaming, disabled, onSend, onStop }: ChatInputProp
           </Button>
         )}
       </div>
+      <p className="mx-auto mt-2 max-w-3xl px-1 text-[11px] text-slate-400">内容仅用于本次知识库问答；回答可能存在偏差，请核对引用原文。</p>
     </div>
   );
 }

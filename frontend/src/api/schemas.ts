@@ -25,6 +25,25 @@ export const TokenResponseSchema = z.object({
 });
 export type TokenResponse = z.infer<typeof TokenResponseSchema>;
 
+// ---------- 用户模型配置 ----------
+export const ModelConfigSchema = z.object({
+  id: z.string().uuid(),
+  name: z.string(),
+  base_url: z.string().url(),
+  model_name: z.string(),
+  api_key_masked: z.string(),
+  timeout_seconds: z.number(),
+  price_input_per_million: z.number().nullable(),
+  price_output_per_million: z.number().nullable(),
+  is_active: z.boolean(),
+  created_at: z.string(),
+  updated_at: z.string(),
+});
+export type ModelConfig = z.infer<typeof ModelConfigSchema>;
+
+export const ModelConfigTestResultSchema = z.object({ ok: z.boolean(), message: z.string() });
+export type ModelConfigTestResult = z.infer<typeof ModelConfigTestResultSchema>;
+
 // ---------- 会话与消息 ----------
 export const SessionSchema = z.object({
   id: z.string().uuid(),

@@ -1,0 +1,30 @@
+{
+  "id": "local-deploy-model-config-ui",
+  "name": "local-deploy-model-config-ui",
+  "title": "本地部署、模型配置与界面重构",
+  "description": "统筹多供应商模型配置、知识问答界面重构、Docker Desktop 部署和 Jenkins 自动化的集成验收",
+  "status": "planning",
+  "dev_type": null,
+  "scope": null,
+  "package": null,
+  "priority": "P2",
+  "creator": "guotao",
+  "assignee": "guotao",
+  "createdAt": "2026-09-06",
+  "completedAt": null,
+  "branch": null,
+  "base_branch": "main",
+  "worktree_path": null,
+  "commit": null,
+  "pr_url": null,
+  "subtasks": [],
+  "children": [
+    "09-06-multi-provider-settings",
+    "09-06-knowledge-qa-ui-redesign",
+    "09-06-docker-jenkins-local-deploy"
+  ],
+  "parent": null,
+  "relatedFiles": [],
+  "notes": "",
+  "meta": {}
+}

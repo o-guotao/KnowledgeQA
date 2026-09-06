@@ -1,6 +1,7 @@
 """应用配置：全部经环境变量注入，密钥仅存在于服务端。"""
 from functools import lru_cache
 
+from pydantic import Field
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
 
@@ -31,6 +32,10 @@ class Settings(BaseSettings):
     deepseek_timeout_seconds: float = 60.0
     deepseek_price_input_per_million: float = 2.0
     deepseek_price_output_per_million: float = 8.0
+
+    # 用户自定义模型配置：Fernet 32-byte URL-safe base64 key，由部署环境注入。
+    # 留空时旧 DEEPSEEK_* 配置仍可使用，但不能创建用户配置。
+    provider_config_encryption_key: str = Field(default="", validation_alias="MODEL_CONFIG_ENCRYPTION_KEY")
 
     # Embedding
     embedding_model: str = "BAAI/bge-small-zh-v1.5"

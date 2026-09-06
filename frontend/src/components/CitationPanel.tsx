@@ -32,7 +32,7 @@ export function CitationPanel({ chunkId, onClose }: CitationPanelProps) {
   if (!chunkId) return null;
 
   return (
-    <aside className="flex w-80 shrink-0 flex-col border-l border-slate-200 bg-white/80 backdrop-blur-xl animate-fade-up">
+    <aside className="fixed inset-y-0 right-0 z-40 flex w-full max-w-md shrink-0 flex-col border-l border-slate-200 bg-white/95 shadow-2xl backdrop-blur-xl animate-fade-up lg:static lg:w-80 lg:bg-white/80 lg:shadow-none">
       <div className="flex items-center justify-between border-b border-slate-100 px-4 py-3">
         <div className="flex items-center gap-2 text-sm font-medium">
           <FileText size={16} className="text-brand" />
