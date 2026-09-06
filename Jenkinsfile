@@ -15,7 +15,7 @@ pipeline {
         stage('Preflight') {
             steps {
                 script {
-                    // 生成 .env 文件
+                    // 生成 .env 基础配置
                     bat """
                         echo POSTGRES_USER=webagent > .env
                         echo POSTGRES_PASSWORD=webagent_secret >> .env
@@ -25,14 +25,22 @@ pipeline {
                         echo MINIO_BUCKET=web-agent-docs >> .env
                     """
                     
-                    // 从 Jenkins 凭据注入加密密钥
-                    withCredentials([string(credentialsId: 'knowledgeqa-model-config-encryption-key', variable: 'MODEL_CONFIG_ENCRYPTION_KEY')]) {
+                    // 尝试从凭据注入加密密钥，如果不存在则使用默认值
+                    try {
+                        withCredentials([string(credentialsId: 'knowledgeqa-model-config-encryption-key', variable: 'MODEL_CONFIG_ENCRYPTION_KEY')]) {
+                            bat """
+                                echo MODEL_CONFIG_ENCRYPTION_KEY=${MODEL_CONFIG_ENCRYPTION_KEY} >> .env
+                            """
+                        }
+                        echo '✅ 使用 Jenkins 凭据注入加密密钥'
+                    } catch (Exception e) {
+                        echo '⚠️ 未找到 knowledgeqa-model-config-encryption-key 凭据，使用默认值'
                         bat """
-                            echo MODEL_CONFIG_ENCRYPTION_KEY=${MODEL_CONFIG_ENCRYPTION_KEY} >> .env
+                            echo MODEL_CONFIG_ENCRYPTION_KEY=default-key-12345 >> .env
                         """
                     }
                     
-                    // 预拉取所有基础镜像（使用阿里云源，然后打标准标签）
+                    // 预拉取所有基础镜像
                     bat """
                         echo ========================================
                         echo 预拉取基础镜像...
@@ -56,7 +64,7 @@ pipeline {
                         docker images | findstr nginx
                     """
                     
-                    // 验证 Docker 环境（去掉 config -q）
+                    // 验证 Docker 环境
                     bat 'docker version && docker compose version'
                     
                     echo '✅ Preflight 检查通过'
@@ -130,17 +138,23 @@ pipeline {
                     echo ========================================
                     docker compose ps
                     docker logs web-agent-backend --tail 50 2>nul || echo 后端容器未启动
+                    docker logs web-agent-frontend --tail 50 2>nul || echo 前端容器未启动
                 """
                 
                 if (env.HAS_ROLLBACK == 'true') {
-                    echo '部署失败，尝试回滚到上一个稳定版本...'
+                    echo '🔄 部署失败，尝试回滚到上一个稳定版本...'
                     bat 'docker compose up -d --no-build --remove-orphans'
                 }
             }
         }
         always {
             script {
-                bat 'docker compose ps'
+                bat """
+                    echo ========================================
+                    echo 最终容器状态
+                    echo ========================================
+                    docker compose ps
+                """
             }
         }
     }
