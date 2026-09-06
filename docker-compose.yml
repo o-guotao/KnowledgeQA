@@ -76,7 +76,8 @@ services:
       minio-init:
         condition: service_completed_successfully
     healthcheck:
-      test: ["CMD-SHELL", "wget -q -O - http://localhost:8000/api/healthz || exit 1"]
+      # python:3.12-slim 无 wget/curl，用标准库 urllib 探测；127.0.0.1 避免 localhost 解析到 ::1
+      test: ["CMD", "python", "-c", "import urllib.request,sys; sys.exit(0 if urllib.request.urlopen('http://127.0.0.1:8000/api/healthz', timeout=5).status == 200 else 1)"]
       interval: 20s
       timeout: 10s
       retries: 30
@@ -108,7 +109,7 @@ services:
     depends_on:
       - backend
     healthcheck:
-      test: ["CMD-SHELL", "wget -q -O /dev/null http://localhost/ || exit 1"]
+      test: ["CMD-SHELL", "wget -q -O /dev/null http://127.0.0.1/ || exit 1"]
       interval: 10s
       timeout: 5s
       retries: 12

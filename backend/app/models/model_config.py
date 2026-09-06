@@ -18,7 +18,7 @@ class ModelConfig(Base):
     base_url: Mapped[str] = mapped_column(String(512), nullable=False)
     model_name: Mapped[str] = mapped_column(String(128), nullable=False)
     api_key_encrypted: Mapped[str] = mapped_column(Text, nullable=False)
-    api_key_hint: Mapped[str] = mapped_column(String(16), nullable=False)
+    api_key_hint: Mapped[str] = mapped_column(String(512), nullable=False)
     timeout_seconds: Mapped[float] = mapped_column(Float, default=60.0)
     price_input_per_million: Mapped[float | None] = mapped_column(Float, nullable=True)
     price_output_per_million: Mapped[float | None] = mapped_column(Float, nullable=True)
