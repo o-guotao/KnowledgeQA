@@ -12,10 +12,7 @@ node_modules/
 dist/
 *.local
 
-# Env & secrets（任何目录下的 .env 都不入库）
-.env
-**/.env
-!.env.example
+
 
 # Models & data
 .models/
