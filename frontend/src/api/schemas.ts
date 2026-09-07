@@ -75,7 +75,8 @@ export type Message = z.infer<typeof MessageSchema>;
 export const DocumentSchema = z.object({
   id: z.string().uuid(),
   filename: z.string(),
-  status: z.enum(["uploaded", "processing", "ready", "failed"]),
+  content_hash: z.string().nullable(),
+  status: z.enum(["uploaded", "processing", "ready", "failed", "no_text"]),
   chunk_size: z.number(),
   chunk_overlap: z.number(),
   chunk_count: z.number(),

@@ -98,3 +98,29 @@ export async function patch<T>(
 export async function del(path: string): Promise<void> {
   await request(path, z.unknown(), { method: "DELETE" });
 }
+
+/** 取文档原始字节（预览用）：需鉴权，不走 <img>/iframe 以免泄漏凭据。 */
+export async function getFileBytes(documentId: string): Promise<ArrayBuffer> {
+  const headers = new Headers();
+  const token = getToken();
+  if (token) headers.set("Authorization", `Bearer ${token}`);
+  const response = await fetch(`/api/documents/${documentId}/file`, { headers });
+  if (!response.ok) {
+    // 与 request() 一致：尽量透出后端 detail.message（如 404「文档不存在」），否则回退通用文案
+    let code = "HTTP_" + response.status;
+    let message = `获取文件失败（${response.status}）`;
+    try {
+      const body: unknown = await response.json();
+      const parsed = ApiErrorSchema.safeParse(body);
+      if (parsed.success) {
+        code = parsed.data.detail.code;
+        message = parsed.data.detail.message;
+      }
+    } catch {
+      // 响应非 JSON（网关/代理错误），保留默认错误信息
+    }
+    if (response.status === 401) clearToken();
+    throw new ApiRequestError(code, message, response.status);
+  }
+  return response.arrayBuffer();
+}

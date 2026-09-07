@@ -37,6 +37,10 @@ export function ChatPage() {
   const [quotaExhausted, setQuotaExhausted] = useState(false);
   const [sidebarOpen, setSidebarOpen] = useState(false);
   const lastQuestionRef = useRef<string>("");
+  // 正在本地流式作答的会话 id：activeId 切换会触发历史加载，需据此跳过以免清掉乐观消息
+  const turnSessionRef = useRef<string | null>(null);
+  // 该在途会话的乐观消息当前是否正显示在列表中（中途切走再切回时已非乐观列表，须走真实历史加载）
+  const turnVisibleRef = useRef(false);
   const bottomRef = useRef<HTMLDivElement>(null);
   const { streaming, send, stop } = useChatStream();
 
@@ -56,8 +60,15 @@ export function ChatPage() {
       setMessages([]);
       return;
     }
+    // 刚新建会话并首次提问：assistant 尚未落库（服务端先以 streaming 态写入），
+    // 此时用服务端历史覆盖乐观列表会把占位条清掉/过滤掉，导致首轮回答不显示。
+    // 仅当该会话的乐观列表正显示在屏上时以它为准跳过；中途切走再切回则走真实历史。
+    if (turnSessionRef.current === activeId && turnVisibleRef.current) return;
+    turnVisibleRef.current = false; // 将用服务端历史替换当前列表
+    let cancelled = false;
     get(`/sessions/${activeId}/messages`, z.array(MessageSchema))
-      .then((rows) =>
+      .then((rows) => {
+        if (cancelled) return;
         setMessages(
           rows
             .filter((m) => m.status !== "streaming")
@@ -70,9 +81,14 @@ export function ChatPage() {
               error: m.error,
               traceId: m.trace_id,
             })),
-        ),
-      )
-      .catch((err) => console.error("messages fetch failed", err));
+        );
+      })
+      .catch((err) => {
+        if (!cancelled) console.error("messages fetch failed", err);
+      });
+    return () => {
+      cancelled = true;
+    };
   }, [activeId]);
 
   useEffect(() => {
@@ -160,9 +176,11 @@ export function ChatPage() {
       if (!sessionId) {
         const session = await post("/sessions", { title: "新会话" }, SessionSchema);
         setSessions((prev) => [session, ...prev]);
-        setActiveId(session.id);
         sessionId = session.id;
       }
+      // 先登记在途会话，再切 activeId/追加乐观消息：历史加载 effect 据此跳过，不覆盖本轮
+      turnSessionRef.current = sessionId;
+      if (!activeId) setActiveId(sessionId);
       lastQuestionRef.current = content;
       const assistantLocalId = nextLocalId();
       setMessages((prev) => [
@@ -170,15 +188,20 @@ export function ChatPage() {
         { id: nextLocalId(), role: "user", content },
         { id: assistantLocalId, role: "assistant", content: "", status: "local_streaming" },
       ]);
-      await send(sessionId, content, {
-        onEvent: (event) => handleEvent(assistantLocalId, event),
-        onError: (message) =>
-          setMessages((prev) =>
-            prev.map((m) =>
-              m.id === assistantLocalId ? { ...m, status: "failed", error: message } : m,
+      turnVisibleRef.current = true;
+      try {
+        await send(sessionId, content, {
+          onEvent: (event) => handleEvent(assistantLocalId, event),
+          onError: (message) =>
+            setMessages((prev) =>
+              prev.map((m) =>
+                m.id === assistantLocalId ? { ...m, status: "failed", error: message } : m,
+              ),
             ),
-          ),
-      });
+        });
+      } finally {
+        if (turnSessionRef.current === sessionId) turnSessionRef.current = null;
+      }
       // abort 路径：仍处本地流式态则标记已停止
       setMessages((prev) =>
         prev.map((m) =>

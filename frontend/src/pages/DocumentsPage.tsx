@@ -1,10 +1,11 @@
-import { ArrowLeft, FileUp, Loader2, RefreshCw, Trash2 } from "lucide-react";
+import { ArrowLeft, Eye, FileUp, Loader2, RefreshCw, Trash2, X } from "lucide-react";
 import { useCallback, useEffect, useRef, useState } from "react";
 import { useNavigate } from "react-router-dom";
 import { z } from "zod";
 
 import { del, get, postForm } from "../api/client";
 import { DocumentSchema, type KnowledgeDocument } from "../api/schemas";
+import { DocumentPreviewModal } from "../components/DocumentPreviewModal";
 import { Badge } from "../components/ui/badge";
 import { Button } from "../components/ui/button";
 import { Card, CardContent } from "../components/ui/card";
@@ -14,8 +15,50 @@ const STATUS_META: Record<KnowledgeDocument["status"], { label: string; variant:
   processing: { label: "切分中", variant: "warning" },
   ready: { label: "已入库", variant: "success" },
   failed: { label: "失败", variant: "destructive" },
+  no_text: { label: "不可检索", variant: "muted" },
 };
 const PENDING_STATUSES: KnowledgeDocument["status"][] = ["uploaded", "processing"];
+
+// 与后端校验保持一致：扩展名白名单、20MB、文件名规则（见 backend/app/api/documents.py）
+const ALLOWED_EXTS = [".txt", ".md", ".markdown", ".pdf"];
+const MAX_UPLOAD_BYTES = 20 * 1024 * 1024;
+const FORBIDDEN_FILENAME_CHARS = /[<>:"/\\|?*]/;
+const CONTROL_CHARS = /[\u0000-\u001f\u007f]/;
+
+type PendingStatus = "pending" | "uploading" | "error";
+
+interface PendingFile {
+  id: string;
+  file: File;
+  status: PendingStatus;
+  message?: string;
+}
+
+function fileExt(name: string): string {
+  const dot = name.lastIndexOf(".");
+  return dot >= 0 ? name.slice(dot).toLowerCase() : "";
+}
+
+/** 文件名规则：与后端 `_normalize_filename` 对齐；返回错误文案，合法返回 null。 */
+function filenameError(name: string): string | null {
+  if (!name) return "文件名为空";
+  if (CONTROL_CHARS.test(name)) return "文件名包含非法控制字符";
+  if (FORBIDDEN_FILENAME_CHARS.test(name)) return '文件名包含非法字符：<>:"/\\|?*';
+  const n = name.trim().length;
+  if (n < 1) return "文件名为空";
+  if (n > 255) return "文件名过长（≤255 字符）";
+  return null;
+}
+
+async function sha256Hex(buf: ArrayBuffer): Promise<string> {
+  const digest = await crypto.subtle.digest("SHA-256", buf);
+  return Array.from(new Uint8Array(digest))
+    .map((b) => b.toString(16).padStart(2, "0"))
+    .join("");
+}
+
+let uid = 0;
+const nextId = () => `pf-${Date.now()}-${uid++}`;
 
 function fmtTime(iso: string): string {
   const d = new Date(iso);
@@ -26,7 +69,9 @@ function fmtTime(iso: string): string {
 export function DocumentsPage() {
   const navigate = useNavigate();
   const [docs, setDocs] = useState<KnowledgeDocument[]>([]);
+  const [queue, setQueue] = useState<PendingFile[]>([]);
   const [uploading, setUploading] = useState(false);
+  const [preview, setPreview] = useState<KnowledgeDocument | null>(null);
   const fileRef = useRef<HTMLInputElement>(null);
 
   const refresh = useCallback(() => {
@@ -48,20 +93,72 @@ export function DocumentsPage() {
     return () => clearInterval(timer);
   }, [pendingCount, refresh]);
 
-  const upload = async (file: File) => {
-    setUploading(true);
-    try {
-      const form = new FormData();
-      form.append("file", file);
-      const created = await postForm("/documents", form, DocumentSchema);
-      setDocs((prev) => [created, ...prev]);
-    } catch (err) {
-      alert(err instanceof Error ? err.message : "上传失败");
-    } finally {
-      setUploading(false);
-      if (fileRef.current) fileRef.current.value = "";
+  /** 选择文件后：逐文件本地预检（类型/大小/文件名/内容哈希判重），生成待上传队列。 */
+  const onSelectFiles = async (list: FileList | null) => {
+    if (!list || list.length === 0) return;
+    const files = Array.from(list);
+    const items: PendingFile[] = [];
+    const selectionHashes = new Map<string, string>(); // hash -> filename（批内判重）
+    const existingByHash = new Map<string, string>();
+    for (const d of docs) {
+      if (d.content_hash) existingByHash.set(d.content_hash, d.filename);
+    }
+
+    for (const file of files) {
+      const problems: string[] = [];
+      const ext = fileExt(file.name);
+      if (!ALLOWED_EXTS.includes(ext)) problems.push("仅支持 .txt/.md/.markdown/.pdf");
+      if (file.size === 0) problems.push("文件内容为空");
+      if (file.size > MAX_UPLOAD_BYTES) problems.push("超过 20MB 上限");
+      const nameErr = filenameError(file.name);
+      if (nameErr) problems.push(nameErr);
+
+      let hash: string | null = null;
+      if (problems.length === 0) {
+        hash = await sha256Hex(await file.arrayBuffer());
+        const dupName = existingByHash.get(hash) ?? selectionHashes.get(hash);
+        if (dupName) problems.push(`内容已存在：${dupName}`);
+        else selectionHashes.set(hash, file.name);
+      }
+
+      items.push(
+        problems.length > 0
+          ? { id: nextId(), file, status: "error", message: problems.join("；") }
+          : { id: nextId(), file, status: "pending" },
+      );
+    }
+
+    if (items.length > 0) {
+      setQueue((prev) => [...prev, ...items]);
+      // 未通过预检的项仍留在队列里展示原因；通过项等用户点「上传」
     }
   };
+
+  /** 对队列中 pending 项逐文件串行上传；成功即入列表并从队列移除，失败保留原因。 */
+  const uploadPending = async () => {
+    const toUpload = queue.filter((q) => q.status === "pending");
+    if (toUpload.length === 0 || uploading) return;
+    setUploading(true);
+    for (const item of toUpload) {
+      setQueue((prev) => prev.map((x) => (x.id === item.id ? { ...x, status: "uploading" } : x)));
+      try {
+        const form = new FormData();
+        form.append("file", item.file);
+        const created = await postForm("/documents", form, DocumentSchema);
+        setDocs((prev) => [created, ...prev]);
+        setQueue((prev) => prev.filter((x) => x.id !== item.id));
+      } catch (err) {
+        const msg = err instanceof Error ? err.message : "上传失败";
+        setQueue((prev) => prev.map((x) => (x.id === item.id ? { ...x, status: "error", message: msg } : x)));
+      }
+    }
+    setUploading(false);
+    if (fileRef.current) fileRef.current.value = "";
+  };
+
+  const clearQueue = () => setQueue([]);
+  const removeQueueItem = (id: string) => setQueue((prev) => prev.filter((x) => x.id !== id));
+  const pendingToUpload = queue.filter((q) => q.status === "pending").length;
 
   const [deletingId, setDeletingId] = useState<string | null>(null);
   const removeDocument = async (doc: KnowledgeDocument) => {
@@ -82,6 +179,8 @@ export function DocumentsPage() {
 
   const readyCount = docs.filter((d) => d.status === "ready").length;
   const failedCount = docs.filter((d) => d.status === "failed").length;
+  const noTextCount = docs.filter((d) => d.status === "no_text").length;
+  const busy = uploading;
 
   return (
     <main className="min-h-screen bg-slate-50 px-4 py-8 sm:px-8">
@@ -108,30 +207,99 @@ export function DocumentsPage() {
               刷新
             </Button>
             <Button
-              disabled={uploading}
+              disabled={busy}
               onClick={() => fileRef.current?.click()}
               className="cursor-pointer"
             >
-              {uploading ? <Loader2 size={15} className="animate-spin" /> : <FileUp size={15} />}
-              {uploading ? "上传中…" : "上传文档"}
+              {busy ? <Loader2 size={15} className="animate-spin" /> : <FileUp size={15} />}
+              {busy ? "上传中…" : "上传文档"}
             </Button>
             <input
               ref={fileRef}
               type="file"
+              multiple
               accept=".txt,.md,.markdown,.pdf"
               className="hidden"
               onChange={(e) => {
-                const file = e.target.files?.[0];
-                if (file) void upload(file);
+                void onSelectFiles(e.target.files);
+                e.target.value = "";
               }}
             />
           </div>
         </header>
 
         <p className="max-w-3xl text-sm leading-6 text-muted">
-          上传制度、手册或 FAQ（.txt/.md/.pdf，单个 ≤ 20MB），系统自动切分并入库，之后即可在问答中检索并带引用回答。
+          上传制度、手册或 FAQ（.txt/.md/.pdf，单个 ≤ 20MB，可一次多选）。系统对重复内容/纯图片 PDF 做校验并明确提示；
+          合规文档自动切分入库，之后即可在问答中检索并带引用回答。
           {pendingCount > 0 && " 有文档正在处理，将自动刷新直到完成。"}
         </p>
+
+        {/* 待上传/上传结果面板 */}
+        {queue.length > 0 && (
+          <Card>
+            <CardContent className="space-y-2 py-4">
+              <div className="flex items-center justify-between gap-2">
+                <p className="text-sm font-medium text-ink">
+                  本次选择 {queue.length} 份
+                  {pendingToUpload > 0 ? `，待上传 ${pendingToUpload} 份` : ""}
+                </p>
+                <div className="flex items-center gap-2">
+                  <Button
+                    variant="outline"
+                    size="sm"
+                    onClick={clearQueue}
+                    disabled={busy}
+                    className="cursor-pointer"
+                  >
+                    清空
+                  </Button>
+                  <Button
+                    size="sm"
+                    onClick={() => void uploadPending()}
+                    disabled={busy || pendingToUpload === 0}
+                    className="cursor-pointer"
+                  >
+                    {busy ? <Loader2 size={14} className="animate-spin" /> : <FileUp size={14} />}
+                    {busy ? "上传中…" : `上传 ${pendingToUpload} 份`}
+                  </Button>
+                </div>
+              </div>
+              <ul className="divide-y divide-slate-100">
+                {queue.map((it) => (
+                  <li key={it.id} className="flex items-center justify-between gap-3 py-1.5 text-sm">
+                    <div className="min-w-0 flex-1">
+                      <p className="truncate" title={it.file.name}>
+                        {it.file.name}
+                      </p>
+                      {it.message && it.status === "error" && (
+                        <p className="truncate text-xs text-red-600" title={it.message}>
+                          {it.message}
+                        </p>
+                      )}
+                    </div>
+                    <Badge
+                      variant={
+                        it.status === "error" ? "destructive" : it.status === "uploading" ? "warning" : "muted"
+                      }
+                    >
+                      {it.status === "error" ? "未上传" : it.status === "uploading" ? "上传中" : "待上传"}
+                    </Badge>
+                    <Button
+                      variant="ghost"
+                      size="icon"
+                      aria-label="移出队列"
+                      disabled={busy}
+                      onClick={() => removeQueueItem(it.id)}
+                      className="shrink-0 cursor-pointer text-slate-400 hover:bg-slate-100 hover:text-slate-600"
+                    >
+                      <X size={15} />
+                    </Button>
+                  </li>
+                ))}
+              </ul>
+            </CardContent>
+          </Card>
+        )}
 
         <div className="flex flex-wrap gap-2 text-sm">
           <span className="rounded-full bg-slate-100 px-3 py-1 text-slate-600">全部 {docs.length}</span>
@@ -141,6 +309,9 @@ export function DocumentsPage() {
           )}
           {failedCount > 0 && (
             <span className="rounded-full bg-red-50 px-3 py-1 text-red-700">失败 {failedCount}</span>
+          )}
+          {noTextCount > 0 && (
+            <span className="rounded-full bg-slate-100 px-3 py-1 text-slate-500">不可检索 {noTextCount}</span>
           )}
         </div>
 
@@ -158,6 +329,12 @@ export function DocumentsPage() {
           ) : (
             docs.map((d) => {
               const meta = STATUS_META[d.status];
+              const sideText =
+                d.status === "ready"
+                  ? "可用于问答"
+                  : d.status === "no_text"
+                    ? "纯图片 PDF，无文字层，不可检索"
+                    : "处理中…";
               return (
                 <Card key={d.id}>
                   <CardContent className="flex flex-col gap-2 py-4 sm:flex-row sm:items-center sm:justify-between">
@@ -176,9 +353,19 @@ export function DocumentsPage() {
                         {d.status === "failed" && d.error ? (
                           <p className="max-w-56 text-red-600" title={d.error}>{d.error}</p>
                         ) : (
-                          <p className="text-slate-400">{d.status === "ready" ? "可用于问答" : "处理中…"}</p>
+                          <p className="text-slate-400">{sideText}</p>
                         )}
                       </div>
+                      <Button
+                        variant="ghost"
+                        size="icon"
+                        aria-label={`预览 ${d.filename}`}
+                        disabled={deletingId === d.id}
+                        onClick={() => setPreview(d)}
+                        className="shrink-0 cursor-pointer text-slate-400 hover:bg-slate-100 hover:text-slate-600"
+                      >
+                        <Eye size={15} />
+                      </Button>
                       <Button
                         variant="ghost"
                         size="icon"
@@ -196,6 +383,14 @@ export function DocumentsPage() {
             })
           )}
         </section>
+
+        {preview && (
+          <DocumentPreviewModal
+            key={preview.id}
+            document={preview}
+            onClose={() => setPreview(null)}
+          />
+        )}
       </div>
     </main>
   );

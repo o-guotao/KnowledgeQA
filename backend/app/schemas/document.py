@@ -7,6 +7,7 @@ from pydantic import BaseModel
 class DocumentOut(BaseModel):
     id: uuid.UUID
     filename: str
+    content_hash: str | None
     status: str
     chunk_size: int
     chunk_overlap: int
