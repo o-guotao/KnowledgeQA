@@ -200,8 +200,24 @@ async def loop() -> None:
         logger.info("task done", extra={"task_id": str(task.id), "extra": {"duration_ms": duration_ms}})
 
 
+async def _verify_embedding_on_start(settings) -> None:
+    """worker 启动校验 embedding：worker 是实际执行 embedding 的进程，
+    生产环境后端不可用必须 fail fast，否则切分任务全部失败进死信。"""
+    from app.services.embeddings import verify_embedding_ready
+
+    ok, message = await verify_embedding_ready()
+    if not ok:
+        if settings.environment == "production":
+            raise RuntimeError(f"worker embedding 生产启动校验失败：{message}")
+        logger.warning("embedding startup check failed (dev, continuing): %s", message)
+    else:
+        logger.info("worker startup check: %s", message)
+
+
 def main() -> None:
     configure_logging()
+    settings = get_settings()
+    asyncio.run(_verify_embedding_on_start(settings))
     asyncio.run(loop())
 
 

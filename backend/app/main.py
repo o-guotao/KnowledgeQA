@@ -32,23 +32,26 @@ app.include_router(api_router)
 
 @app.on_event("startup")
 async def _startup_checks() -> None:
-    """启动时校验 embedding 维度与配置一致，避免运行时写入 vector 列才报错。
+    """启动校验：embedding 后端真实可用、维度匹配、生产禁止非语义降级。
 
-    校验失败应 fail fast：模型加载需要时间，但维度错配是配置错误，
-    应在服务对外可访问前暴露，而非首条提问时才报晦涩的 type error。
+    production 环境校验失败必须 fail fast（raise），避免以随机召回对外服务；
+    development 降级到 hash 时仅记警告（链路可演示，召回无语义）。
     """
-    try:
-        from app.services.embedding import verify_dimension
+    import logging
 
-        await verify_dimension()
-    except Exception as exc:
-        # 仅记日志不阻断启动：embedding 失败时 chat 会降级为空召回，文档仍可上传
-        # 但 worker 处理会失败——由 worker 自行报错更明确。
-        import logging
+    from app.services.embeddings import verify_embedding_ready
+
+    ok, message = await verify_embedding_ready()
+    if not ok:
+        if settings.environment == "production":
+            # 生产 fail fast：宁可起不来也不以错误状态对外服务
+            raise RuntimeError(f"embedding 生产启动校验失败：{message}")
         logging.getLogger(__name__).warning(
-            "embedding dimension verify failed at startup: %s", exc,
-            extra={"event": "embedding_verify_failed"},
+            "embedding startup check failed (dev, continuing): %s",
+            message, extra={"event": "embedding_verify_failed"},
         )
+    else:
+        logging.getLogger(__name__).info("startup check: %s", message)
 
 
 @app.get("/api/healthz")

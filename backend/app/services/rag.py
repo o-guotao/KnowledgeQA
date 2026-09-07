@@ -20,19 +20,32 @@ class RetrievedChunk:
 
 
 async def retrieve(
-    db: AsyncSession, user_id: uuid.UUID, query_embedding: list[float], top_k: int | None = None
+    db: AsyncSession,
+    user_id: uuid.UUID,
+    query_embedding: list[float],
+    top_k: int | None = None,
+    query_text: str | None = None,
 ) -> list[RetrievedChunk]:
-    k = top_k or get_settings().rag_top_k
+    """向量召回 + 可选重排序。
+
+    启用 RERANK_ENABLED 时：先召回 top_k * multiplier 候选，再 cross-encoder 精排取 top_k。
+    query_text 为重排所需（cross-encoder 需原始问题），未提供时跳过重排。
+    """
+    settings = get_settings()
+    k = top_k or settings.rag_top_k
+    # 重排开启时召回更多候选，否则只召回 top_k
+    candidate_k = k * settings.rerank_candidate_multiplier if settings.rerank_enabled else k
+
     distance = Chunk.embedding.cosine_distance(query_embedding).label("distance")
     stmt = (
         select(Chunk, Document.filename, distance)
         .join(Document, Chunk.document_id == Document.id)
         .where(Chunk.user_id == user_id, Document.status == "ready")
         .order_by(distance)
-        .limit(k)
+        .limit(candidate_k)
     )
     rows = (await db.execute(stmt)).all()
-    return [
+    candidates = [
         RetrievedChunk(
             chunk_id=chunk.id,
             document_id=chunk.document_id,
@@ -42,6 +55,13 @@ async def retrieve(
         )
         for chunk, filename, distance in rows
     ]
+
+    # cross-encoder 精排（失败时内部降级为粗排截断）
+    if settings.rerank_enabled and query_text:
+        from app.services.rerank import rerank
+
+        candidates = await rerank(query_text, candidates, k)
+    return candidates
 
 
 def build_rag_prompt(question: str, chunks: list[RetrievedChunk]) -> str:

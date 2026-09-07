@@ -66,6 +66,7 @@ services:
       MINIO_ENDPOINT: minio:9000
       FASTEMBED_CACHE_PATH: /data/models
       MODEL_CONFIG_ENCRYPTION_KEY: ${MODEL_CONFIG_ENCRYPTION_KEY:-}
+      ENVIRONMENT: ${ENVIRONMENT:-production}
     ports:
       - "8000:8000"
     volumes:
@@ -94,6 +95,7 @@ services:
       MINIO_ENDPOINT: minio:9000
       FASTEMBED_CACHE_PATH: /data/models
       MODEL_CONFIG_ENCRYPTION_KEY: ${MODEL_CONFIG_ENCRYPTION_KEY:-}
+      ENVIRONMENT: ${ENVIRONMENT:-production}
     volumes:
       - modelcache:/data/models
     depends_on:
@@ -113,6 +115,24 @@ services:
       interval: 10s
       timeout: 5s
       retries: 12
+
+  # 生产 HTTPS 反代（profile: production，用 --profile production 启动）
+  nginx:
+    image: nginx:1.27-alpine
+    container_name: web-agent-nginx
+    profiles: ["production"]
+    ports:
+      - "80:80"
+      - "443:443"
+    volumes:
+      - ./deploy/nginx/nginx.rendered.conf:/etc/nginx/conf.d/default.conf:ro
+      - ./deploy/nginx/certbot/conf:/etc/letsencrypt:ro
+      - ./deploy/nginx/certbot/www:/var/www/certbot:ro
+    depends_on:
+      backend:
+        condition: service_healthy
+      frontend:
+        condition: service_healthy
 
 volumes:
   pgdata:

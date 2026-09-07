@@ -126,7 +126,7 @@ async def _event_stream(
         try:
             query_vec = await embed_query(body.content)
             async with SessionLocal() as db:
-                chunks = await retrieve(db, user.id, query_vec)
+                chunks = await retrieve(db, user.id, query_vec, query_text=body.content)
         except Exception as exc:
             logger.warning("retrieve degraded: %s", exc, extra={"event": "rag_degraded"})
             chunks = []
