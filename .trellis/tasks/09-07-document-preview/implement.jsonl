@@ -1,0 +1,2 @@
+{"file": ".trellis/tasks/09-07-doc-batch-upload-validation-preview/design.md", "reason": "父任务契约与预览数据流/取舍"}
+{"file": ".trellis/tasks/09-07-document-preview/design.md", "reason": "本任务实现依据：file 接口 + pdf.js 渲染 + modal"}
