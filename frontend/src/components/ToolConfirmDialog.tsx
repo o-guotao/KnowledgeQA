@@ -47,14 +47,14 @@ export function ToolConfirmDialog({ toolCall, onResolved, onClose }: ToolConfirm
             <ShieldAlert className="text-amber-500" size={20} />
             工具调用待确认
           </div>
-          <p className="text-sm text-slate-600">
-            助手请求执行敏感操作 <code className="rounded bg-slate-100 px-1">{toolCall.name}</code>
+          <p className="text-sm text-theme-sub">
+            助手请求执行敏感操作 <code className="rounded bg-white/10 px-1">{toolCall.name}</code>
             ，确认后才会真正执行，操作将全程留痕。
           </p>
-          <pre className="max-h-48 overflow-auto scrollbar-thin rounded-lg bg-slate-900 p-3 text-xs text-slate-100">
+          <pre className="max-h-48 overflow-auto scrollbar-thin rounded-lg bg-black/40 p-3 text-xs text-theme-text">
             {JSON.stringify(toolCall.args, null, 2)}
           </pre>
-          {error && <p className="text-sm text-red-600">{error}</p>}
+          {error && <p className="text-sm text-red-400">{error}</p>}
           <div className="flex justify-end gap-2">
             <Button variant="outline" disabled={submitting} onClick={() => decide(false)}>
               拒绝

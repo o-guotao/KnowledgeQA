@@ -123,6 +123,51 @@ export const QuotaSchema = z.object({
 });
 export type Quota = z.infer<typeof QuotaSchema>;
 
+// ---------- 管理后台 ----------
+export const AdminUserMonthSchema = z.object({
+  prompt_tokens: z.number(),
+  completion_tokens: z.number(),
+  total_tokens: z.number(),
+  cost_cny: z.number(),
+  limit_tokens: z.number(),
+});
+export const AdminUserSchema = z.object({
+  id: z.string().uuid(),
+  username: z.string(),
+  display_name: z.string(),
+  role: z.string(),
+  created_at: z.string(),
+  month: AdminUserMonthSchema,
+});
+export type AdminUser = z.infer<typeof AdminUserSchema>;
+
+export const DailyUsageSchema = z.object({
+  date: z.string(),
+  calls: z.number(),
+  prompt_tokens: z.number(),
+  completion_tokens: z.number(),
+  total_tokens: z.number(),
+  cost_cny: z.number(),
+});
+export type DailyUsage = z.infer<typeof DailyUsageSchema>;
+
+export const UserUsageSchema = z.object({
+  user_id: z.string().uuid(),
+  username: z.string(),
+  calls: z.number(),
+  total_tokens: z.number(),
+  cost_cny: z.number(),
+});
+export type UserUsage = z.infer<typeof UserUsageSchema>;
+
+export const ModelUsageSchema = z.object({
+  model: z.string(),
+  calls: z.number(),
+  total_tokens: z.number(),
+  cost_cny: z.number(),
+});
+export type ModelUsage = z.infer<typeof ModelUsageSchema>;
+
 // ---------- SSE 事件：可辨识联合（type 字段） ----------
 const TraceId = { trace_id: z.string() } as const;
 

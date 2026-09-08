@@ -8,6 +8,8 @@ from pydantic import BaseModel, Field
 class ChatRequest(BaseModel):
     session_id: uuid.UUID
     content: str = Field(min_length=1, max_length=8000)
+    # 检索片段数：不传则用服务端默认 rag_top_k；允许前端按需调整召回数量
+    top_k: int | None = Field(default=None, ge=1, le=20)
 
 
 class ChatEventBase(BaseModel):

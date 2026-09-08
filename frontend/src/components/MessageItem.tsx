@@ -58,8 +58,8 @@ export function MessageItem({ message, streaming, onCitationClick, onRetry, onFe
     <div className={cn("flex gap-3 animate-fade-up", isUser && "flex-row-reverse")}>
       <div
         className={cn(
-          "flex h-8 w-8 shrink-0 items-center justify-center rounded-full",
-          isUser ? "bg-brand text-white" : "bg-slate-800 text-white",
+          "flex h-8 w-8 shrink-0 items-center justify-center rounded-full shadow-soft",
+          isUser ? "bg-gradient-to-br from-brand to-brand-dark text-white" : "border border-theme-line bg-theme-input text-theme-sub",
         )}
       >
         {isUser ? <UserIcon size={16} /> : <Bot size={16} />}
@@ -74,12 +74,12 @@ export function MessageItem({ message, streaming, onCitationClick, onRetry, onFe
         ) : (
           <div
             className={cn(
-              "rounded-2xl px-4 py-2.5 text-sm shadow-sm",
+              "rounded-2xl px-4 py-2.5 text-sm leading-relaxed",
               isUser
-                ? "rounded-tr-sm bg-brand text-white"
+                ? "rounded-tr-sm bg-gradient-to-br from-brand to-brand-dark text-white shadow-soft"
                 : message.role === "tool"
-                  ? "rounded-tl-sm border border-amber-200 bg-amber-50 text-amber-800"
-                  : "rounded-tl-sm bg-white text-ink",
+                  ? "rounded-tl-sm border border-amber-500/30 bg-amber-500/10 text-amber-300"
+                  : "rounded-tl-sm border border-theme-line bg-theme-card text-theme-text shadow-soft",
             )}
           >
             {isUser || message.role === "tool" ? (
@@ -102,7 +102,7 @@ export function MessageItem({ message, streaming, onCitationClick, onRetry, onFe
                 type="button"
                 onClick={() => onCitationClick?.(c.chunk_id)}
                 title={c.document_name}
-                className="rounded-md bg-brand/10 px-1.5 py-0.5 text-xs font-medium text-brand-dark transition-colors hover:bg-brand hover:text-white cursor-pointer"
+                className="rounded-md bg-brand/15 px-1.5 py-0.5 text-xs font-medium text-brand-light transition-colors hover:bg-brand hover:text-white cursor-pointer"
               >
                 [{i + 1}]
               </button>

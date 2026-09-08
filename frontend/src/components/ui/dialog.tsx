@@ -25,7 +25,7 @@ export function Dialog({ open, onClose, children, className }: DialogProps) {
   if (!open) return null;
   return (
     <div
-      className="fixed inset-0 z-50 flex items-center justify-center bg-slate-900/40 backdrop-blur-sm animate-fade-up"
+      className="fixed inset-0 z-50 flex items-center justify-center bg-black/60 backdrop-blur-sm animate-fade-up"
       onClick={onClose}
       role="presentation"
     >
@@ -39,7 +39,7 @@ export function Dialog({ open, onClose, children, className }: DialogProps) {
           type="button"
           onClick={onClose}
           aria-label="关闭"
-          className="absolute right-4 top-4 rounded-md p-1 text-slate-500 hover:bg-slate-100 hover:text-ink cursor-pointer"
+          className="absolute right-4 top-4 rounded-md p-1 text-theme-sub hover:bg-white/10 hover:text-theme-text cursor-pointer"
         >
           <X size={16} />
         </button>

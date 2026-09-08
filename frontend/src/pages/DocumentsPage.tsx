@@ -1,10 +1,11 @@
-import { ArrowLeft, Eye, FileUp, Loader2, RefreshCw, Trash2, X } from "lucide-react";
+import { ArrowLeft, Eye, FileUp, Layers, Loader2, Quote, RefreshCw, Trash2, X } from "lucide-react";
 import { useCallback, useEffect, useRef, useState } from "react";
 import { useNavigate } from "react-router-dom";
 import { z } from "zod";
 
 import { del, get, postForm } from "../api/client";
 import { DocumentSchema, type KnowledgeDocument } from "../api/schemas";
+import { ConfirmDialog } from "../components/ConfirmDialog";
 import { DocumentPreviewModal } from "../components/DocumentPreviewModal";
 import { Badge } from "../components/ui/badge";
 import { Button } from "../components/ui/button";
@@ -167,20 +168,50 @@ export function DocumentsPage() {
   const pendingToUpload = queue.filter((q) => q.status === "pending").length;
 
   const [deletingId, setDeletingId] = useState<string | null>(null);
-  const removeDocument = async (doc: KnowledgeDocument) => {
-    const confirmed = window.confirm(
-      `删除「${doc.filename}」？原始文件与已入库切块（引用数据）将一并删除，无法恢复。`,
-    );
-    if (!confirmed) return;
+  const [selected, setSelected] = useState<Set<string>>(new Set());
+  const [singleConfirm, setSingleConfirm] = useState<KnowledgeDocument | null>(null);
+  const [bulkConfirm, setBulkConfirm] = useState(false);
+  const [bulkDeleting, setBulkDeleting] = useState(false);
+
+  const toggleSelect = (id: string) =>
+    setSelected((prev) => {
+      const next = new Set(prev);
+      if (next.has(id)) next.delete(id);
+      else next.add(id);
+      return next;
+    });
+
+  const removeOne = async (doc: KnowledgeDocument) => {
     setDeletingId(doc.id);
     try {
       await del(`/documents/${doc.id}`);
       setDocs((prev) => prev.filter((d) => d.id !== doc.id));
+      setSelected((prev) => {
+        const next = new Set(prev);
+        next.delete(doc.id);
+        return next;
+      });
     } catch (err) {
       alert(err instanceof Error ? err.message : "删除失败");
     } finally {
       setDeletingId(null);
+      setSingleConfirm(null);
     }
+  };
+
+  const removeBulk = async () => {
+    setBulkDeleting(true);
+    for (const id of Array.from(selected)) {
+      try {
+        await del(`/documents/${id}`);
+      } catch (e) {
+        console.error("bulk delete failed", id, e);
+      }
+    }
+    setDocs((prev) => prev.filter((d) => !selected.has(d.id)));
+    setSelected(new Set());
+    setBulkDeleting(false);
+    setBulkConfirm(false);
   };
 
   const readyCount = docs.filter((d) => d.status === "ready").length;
@@ -191,9 +222,12 @@ export function DocumentsPage() {
   // 文件夹过滤：全部非空 folder 去重排序；filterFolder 为 null 表示不过滤
   const folders = Array.from(new Set(docs.map((d) => d.folder).filter((f) => f))).sort();
   const filteredDocs = filterFolder === null ? docs : docs.filter((d) => d.folder === filterFolder);
+  const allSelected = filteredDocs.length > 0 && filteredDocs.every((d) => selected.has(d.id));
+  const toggleSelectAll = () =>
+    setSelected(allSelected ? new Set() : new Set(filteredDocs.map((d) => d.id)));
 
   return (
-    <main className="min-h-screen bg-slate-50 px-4 py-8 sm:px-8">
+    <main className="min-h-screen bg-gradient-to-b from-theme-bg via-theme-bg to-theme-deep px-4 py-8 sm:px-8">
       <div className="mx-auto max-w-5xl space-y-6">
         <header className="flex items-center justify-between gap-3">
           <div className="flex items-center gap-3">
@@ -202,7 +236,7 @@ export function DocumentsPage() {
             </Button>
             <div>
               <p className="text-sm font-medium text-brand">知识库</p>
-              <h1 className="text-2xl font-semibold text-ink">文档管理</h1>
+              <h1 className="text-2xl font-semibold tracking-tight text-theme-text">文档管理</h1>
             </div>
           </div>
           <div className="flex items-center gap-2">
@@ -238,33 +272,33 @@ export function DocumentsPage() {
           </div>
         </header>
 
-        <p className="max-w-3xl text-sm leading-6 text-muted">
+        <p className="max-w-3xl text-sm leading-6 text-theme-sub">
           上传制度、手册或 FAQ（.txt/.md/.pdf，单个 ≤ 20MB，可一次多选）。系统对重复内容/纯图片 PDF 做校验并明确提示；
           合规文档自动切分入库，之后即可在问答中检索并带引用回答。
           {pendingCount > 0 && " 有文档正在处理，将自动刷新直到完成。"}
         </p>
 
         {/* 本批上传归属：文件夹与标签（可选） */}
-        <div className="flex flex-wrap items-center gap-3 rounded-lg border border-slate-200 bg-white px-4 py-3 text-sm">
-          <label className="flex items-center gap-2 text-slate-600">
+        <div className="flex flex-wrap items-center gap-3 rounded-lg border border-theme-line bg-theme-card px-4 py-3 text-sm">
+          <label className="flex items-center gap-2 text-theme-sub">
             文件夹
             <input
               value={uploadFolder}
               onChange={(e) => setUploadFolder(e.target.value)}
               placeholder="如：制度/人事"
-              className="w-40 rounded-md border border-slate-300 px-2 py-1 text-sm focus:border-brand focus:outline-none"
+              className="w-40 rounded-md border border-theme-line bg-theme-input px-2 py-1 text-sm text-theme-text placeholder:text-theme-sub focus:border-brand focus:outline-none"
             />
           </label>
-          <label className="flex items-center gap-2 text-slate-600">
+          <label className="flex items-center gap-2 text-theme-sub">
             标签
             <input
               value={uploadTags}
               onChange={(e) => setUploadTags(e.target.value)}
               placeholder="逗号分隔，如：报销,流程"
-              className="w-56 rounded-md border border-slate-300 px-2 py-1 text-sm focus:border-brand focus:outline-none"
+              className="w-56 rounded-md border border-theme-line bg-theme-input px-2 py-1 text-sm text-theme-text placeholder:text-theme-sub focus:border-brand focus:outline-none"
             />
           </label>
-          <span className="text-xs text-slate-400">应用于本批上传，便于分类与检索</span>
+          <span className="text-xs text-theme-sub">应用于本批上传，便于分类与检索</span>
         </div>
 
         {/* 待上传/上传结果面板 */}
@@ -272,7 +306,7 @@ export function DocumentsPage() {
           <Card>
             <CardContent className="space-y-2 py-4">
               <div className="flex items-center justify-between gap-2">
-                <p className="text-sm font-medium text-ink">
+                <p className="text-sm font-medium text-theme-text">
                   本次选择 {queue.length} 份
                   {pendingToUpload > 0 ? `，待上传 ${pendingToUpload} 份` : ""}
                 </p>
@@ -305,7 +339,7 @@ export function DocumentsPage() {
                         {it.file.name}
                       </p>
                       {it.message && it.status === "error" && (
-                        <p className="truncate text-xs text-red-600" title={it.message}>
+                        <p className="truncate text-xs text-red-400" title={it.message}>
                           {it.message}
                         </p>
                       )}
@@ -323,7 +357,7 @@ export function DocumentsPage() {
                       aria-label="移出队列"
                       disabled={busy}
                       onClick={() => removeQueueItem(it.id)}
-                      className="shrink-0 cursor-pointer text-slate-400 hover:bg-slate-100 hover:text-slate-600"
+                      className="shrink-0 cursor-pointer text-theme-sub hover:bg-white/10 hover:text-theme-sub"
                     >
                       <X size={15} />
                     </Button>
@@ -338,7 +372,7 @@ export function DocumentsPage() {
           <button
             type="button"
             onClick={() => setFilterFolder(null)}
-            className={`rounded-full px-3 py-1 cursor-pointer transition-colors ${filterFolder === null ? "bg-brand text-white" : "bg-slate-100 text-slate-600 hover:bg-slate-200"}`}
+            className={`rounded-full px-3 py-1 cursor-pointer transition-colors ${filterFolder === null ? "bg-brand text-white" : "bg-white/10 text-theme-sub hover:bg-slate-200"}`}
           >
             全部 {docs.length}
           </button>
@@ -347,34 +381,69 @@ export function DocumentsPage() {
               key={f}
               type="button"
               onClick={() => setFilterFolder(filterFolder === f ? null : f)}
-              className={`rounded-full px-3 py-1 cursor-pointer transition-colors ${filterFolder === f ? "bg-brand text-white" : "bg-indigo-50 text-indigo-700 hover:bg-indigo-100"}`}
+              className={`rounded-full px-3 py-1 cursor-pointer transition-colors ${filterFolder === f ? "bg-brand text-white" : "bg-brand/15 text-brand-light hover:bg-indigo-100"}`}
             >
               {f}
             </button>
           ))}
-          <span className="rounded-full bg-emerald-50 px-3 py-1 text-emerald-700">已入库 {readyCount}</span>
+          <span className="rounded-full bg-emerald-500/15 px-3 py-1 text-emerald-400">已入库 {readyCount}</span>
           {pendingCount > 0 && (
-            <span className="rounded-full bg-amber-50 px-3 py-1 text-amber-700">处理中 {pendingCount}</span>
+            <span className="rounded-full bg-amber-500/15 px-3 py-1 text-amber-400">处理中 {pendingCount}</span>
           )}
           {failedCount > 0 && (
-            <span className="rounded-full bg-red-50 px-3 py-1 text-red-700">失败 {failedCount}</span>
+            <span className="rounded-full bg-red-500/15 px-3 py-1 text-red-400">失败 {failedCount}</span>
           )}
           {noTextCount > 0 && (
-            <span className="rounded-full bg-slate-100 px-3 py-1 text-slate-500">不可检索 {noTextCount}</span>
+            <span className="rounded-full bg-white/10 px-3 py-1 text-slate-500">不可检索 {noTextCount}</span>
           )}
         </div>
 
+        {docs.length > 0 && (
+          <div className="flex items-center gap-3 text-sm">
+            <label className="flex cursor-pointer items-center gap-2 text-theme-sub">
+              <input type="checkbox" checked={allSelected} onChange={toggleSelectAll} className="accent-brand" aria-label="全选" />
+              全选
+            </label>
+            {selected.size > 0 && (
+              <>
+                <span className="text-theme-sub">已选 {selected.size} 份</span>
+                <Button size="sm" variant="destructive" onClick={() => setBulkConfirm(true)}>
+                  <Trash2 size={14} />
+                  批量删除
+                </Button>
+              </>
+            )}
+          </div>
+        )}
+
         <section className="space-y-3">
           {docs.length === 0 ? (
-            <Card>
-              <CardContent className="flex flex-col items-center gap-3 py-16 text-center">
-                <p className="text-sm text-muted">还没有上传过文档</p>
-                <Button size="sm" variant="outline" onClick={() => fileRef.current?.click()} className="cursor-pointer">
-                  <FileUp size={14} />
-                  上传第一份文档
-                </Button>
-              </CardContent>
-            </Card>
+            <div className="flex flex-col items-center rounded-2xl border border-dashed border-theme-line bg-theme-card/60 px-6 py-16 text-center">
+              <div className="flex h-12 w-12 items-center justify-center rounded-xl bg-gradient-to-br from-brand to-brand-dark text-white shadow-pop">
+                <FileUp size={22} />
+              </div>
+              <p className="mt-5 font-medium text-theme-text">还没有上传过文档</p>
+              <p className="mt-1 text-sm text-theme-sub">上传制度、手册或 FAQ，即可在问答中检索并带引用回答</p>
+              <div className="mt-8 grid w-full max-w-xl gap-3 sm:grid-cols-3">
+                {[
+                  { icon: FileUp, title: "上传文档", desc: ".txt/.md/.pdf，单个 ≤20MB" },
+                  { icon: Layers, title: "自动切分入库", desc: "向量化、可检索" },
+                  { icon: Quote, title: "问答带引用", desc: "答案点回原文出处" },
+                ].map((f) => (
+                  <div key={f.title} className="rounded-xl border border-theme-line bg-theme-card p-4 text-left shadow-soft">
+                    <span className="flex h-8 w-8 items-center justify-center rounded-lg bg-brand/15 text-brand-light">
+                      <f.icon size={15} />
+                    </span>
+                    <p className="mt-3 text-sm font-medium text-theme-text">{f.title}</p>
+                    <p className="mt-1 text-xs leading-5 text-theme-sub">{f.desc}</p>
+                  </div>
+                ))}
+              </div>
+              <Button size="sm" onClick={() => fileRef.current?.click()} className="mt-8 cursor-pointer shadow-soft">
+                <FileUp size={14} />
+                上传第一份文档
+              </Button>
+            </div>
           ) : (
             filteredDocs.map((d) => {
               const meta = STATUS_META[d.status];
@@ -385,22 +454,29 @@ export function DocumentsPage() {
                     ? "纯图片 PDF，无文字层，不可检索"
                     : "处理中…";
               return (
-                <Card key={d.id}>
+                <Card key={d.id} className="transition-shadow hover:shadow-card">
                   <CardContent className="flex flex-col gap-2 py-4 sm:flex-row sm:items-center sm:justify-between">
+                    <input
+                      type="checkbox"
+                      checked={selected.has(d.id)}
+                      onChange={() => toggleSelect(d.id)}
+                      aria-label={`选择 ${d.filename}`}
+                      className="shrink-0 self-start accent-brand sm:self-center"
+                    />
                     <div className="min-w-0">
                       <div className="flex flex-wrap items-center gap-2">
-                        <p className="truncate font-medium text-ink">{d.filename}</p>
+                        <p className="truncate font-medium text-theme-text">{d.filename}</p>
                         <Badge variant={meta.variant}>{meta.label}</Badge>
                         {d.folder && (
-                          <span className="rounded bg-indigo-50 px-1.5 py-0.5 text-xs text-indigo-600">{d.folder}</span>
+                          <span className="rounded bg-brand/15 px-1.5 py-0.5 text-xs text-brand-light">{d.folder}</span>
                         )}
                         {d.tags.map((t) => (
-                          <span key={t} className="rounded bg-slate-100 px-1.5 py-0.5 text-xs text-slate-500">
+                          <span key={t} className="rounded bg-white/10 px-1.5 py-0.5 text-xs text-slate-500">
                             #{t}
                           </span>
                         ))}
                       </div>
-                      <p className="mt-1 text-xs text-slate-400">
+                      <p className="mt-1 text-xs text-theme-sub">
                         {fmtTime(d.created_at)}
                         {d.status === "ready" && ` · ${d.chunk_count} 个切块`}
                       </p>
@@ -408,9 +484,9 @@ export function DocumentsPage() {
                     <div className="flex shrink-0 items-center gap-3 text-right">
                       <div className="text-xs">
                         {d.status === "failed" && d.error ? (
-                          <p className="max-w-56 text-red-600" title={d.error}>{d.error}</p>
+                          <p className="max-w-56 text-red-400" title={d.error}>{d.error}</p>
                         ) : (
-                          <p className="text-slate-400">{sideText}</p>
+                          <p className="text-theme-sub">{sideText}</p>
                         )}
                       </div>
                       <Button
@@ -419,7 +495,7 @@ export function DocumentsPage() {
                         aria-label={`预览 ${d.filename}`}
                         disabled={deletingId === d.id}
                         onClick={() => setPreview(d)}
-                        className="shrink-0 cursor-pointer text-slate-400 hover:bg-slate-100 hover:text-slate-600"
+                        className="shrink-0 cursor-pointer text-theme-sub hover:bg-white/10 hover:text-theme-sub"
                       >
                         <Eye size={15} />
                       </Button>
@@ -428,8 +504,8 @@ export function DocumentsPage() {
                         size="icon"
                         aria-label={`删除 ${d.filename}`}
                         disabled={deletingId === d.id}
-                        onClick={() => void removeDocument(d)}
-                        className="shrink-0 cursor-pointer text-slate-400 hover:bg-red-50 hover:text-red-600"
+                        onClick={() => setSingleConfirm(d)}
+                        className="shrink-0 cursor-pointer text-theme-sub hover:bg-red-500/15 hover:text-red-400"
                       >
                         {deletingId === d.id ? <Loader2 size={15} className="animate-spin" /> : <Trash2 size={15} />}
                       </Button>
@@ -448,6 +524,27 @@ export function DocumentsPage() {
             onClose={() => setPreview(null)}
           />
         )}
+
+        <ConfirmDialog
+          open={singleConfirm !== null}
+          title="删除文档"
+          description={singleConfirm ? `删除「${singleConfirm.filename}」？原始文件与已入库切块（引用数据）将一并删除，无法恢复。` : ""}
+          confirmText="删除"
+          destructive
+          loading={deletingId !== null}
+          onConfirm={() => singleConfirm && void removeOne(singleConfirm)}
+          onCancel={() => setSingleConfirm(null)}
+        />
+        <ConfirmDialog
+          open={bulkConfirm}
+          title="批量删除文档"
+          description={`将删除选中的 ${selected.size} 份文档及其入库切块（引用数据），无法恢复。`}
+          confirmText={`删除 ${selected.size} 份`}
+          destructive
+          loading={bulkDeleting}
+          onConfirm={() => void removeBulk()}
+          onCancel={() => setBulkConfirm(false)}
+        />
       </div>
     </main>
   );

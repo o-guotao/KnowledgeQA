@@ -15,7 +15,7 @@ export interface StreamHandlers {
 
 export interface ChatStream {
   streaming: boolean;
-  send: (sessionId: string, content: string, handlers: StreamHandlers) => Promise<void>;
+  send: (sessionId: string, content: string, handlers: StreamHandlers, topK?: number) => Promise<void>;
   stop: () => void;
 }
 
@@ -28,7 +28,7 @@ export function useChatStream(): ChatStream {
   }, []);
 
   const send = useCallback(
-    async (sessionId: string, content: string, handlers: StreamHandlers) => {
+    async (sessionId: string, content: string, handlers: StreamHandlers, topK?: number) => {
       const controller = new AbortController();
       abortRef.current = controller;
       setStreaming(true);
@@ -39,7 +39,7 @@ export function useChatStream(): ChatStream {
             "Content-Type": "application/json",
             Authorization: `Bearer ${getToken() ?? ""}`,
           },
-          body: JSON.stringify({ session_id: sessionId, content }),
+          body: JSON.stringify({ session_id: sessionId, content, ...(topK ? { top_k: topK } : {}) }),
           signal: controller.signal,
         });
         if (!response.ok || !response.body) {

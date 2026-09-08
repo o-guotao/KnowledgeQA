@@ -21,6 +21,7 @@ from app.db import SessionLocal
 from app.logging_config import get_trace_id, set_trace_id
 from app.models.message import Message
 from app.models.session import Session
+from app.models.usage_record import UsageRecord
 from app.models.user import User
 from app.schemas.chat import (
     ChatRequest,
@@ -34,7 +35,7 @@ from app.schemas.chat import (
 from app.services import cost, injection, langfuse_tracing
 from app.services.deepseek import ModelCallError, ModelTimeoutError
 from app.services.embedding import embed_query
-from app.services.rag import build_rag_prompt, retrieve
+from app.services.rag import RAG_SYSTEM_PROMPT, build_rag_user_content, retrieve
 from app.services.model_configs import ProviderConfig, resolve_provider_config
 from app.services.openai_compatible import stream_chat
 from app.services.tools import REQUIRE_CONFIRM, TOOL_DEFINITIONS, execute_tool, parse_tool_args
@@ -127,7 +128,7 @@ async def _event_stream(
             try:
                 query_vec = await embed_query(body.content)
                 async with SessionLocal() as db:
-                    chunks = await retrieve(db, user.id, query_vec, query_text=body.content)
+                    chunks = await retrieve(db, user.id, query_vec, top_k=body.top_k, query_text=body.content)
             except Exception as exc:
                 logger.warning("retrieve degraded: %s", exc, extra={"event": "rag_degraded"})
                 chunks = []
@@ -143,8 +144,12 @@ async def _event_stream(
                 document_name=c.document_name, snippet=c.content[:120],
             ))
 
-        # history 末尾是刚落库的当前用户消息，替换为 RAG 包装版本
-        messages = history[:-1] + [{"role": "user", "content": build_rag_prompt(body.content, chunks)}]
+        # 系统指令独立为 system 角色（约束更强）；history 末尾刚落库的用户消息替换为 RAG 数据版本
+        messages = (
+            [{"role": "system", "content": RAG_SYSTEM_PROMPT}]
+            + history[:-1]
+            + [{"role": "user", "content": build_rag_user_content(body.content, chunks)}]
+        )
 
         # ---- 模型流式调用（工具回路最多 2 轮） ----
         # 每轮 stream_chat 末尾会 yield usage（含工具调用轮）；
@@ -173,6 +178,12 @@ async def _event_stream(
                     )
                     async with SessionLocal() as db:
                         await cost.accumulate_usage(db, user.id, p, c)
+                        # 管理后台用量/成本明细：每次调用落一行（含 model 维度）
+                        db.add(UsageRecord(
+                            user_id=user.id, session_id=body.session_id,
+                            model=provider.model_name, prompt_tokens=p,
+                            completion_tokens=c, cost_cny=cost_cny_round, trace_id=trace_id,
+                        ))
                         await db.commit()
                     yield _sse(UsageEvent(
                         trace_id=trace_id, prompt_tokens=p,
