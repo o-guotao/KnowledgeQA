@@ -1,4 +1,4 @@
-import { Bot, User as UserIcon } from "lucide-react";
+import { Bot, ThumbsDown, ThumbsUp, User as UserIcon } from "lucide-react";
 import ReactMarkdown from "react-markdown";
 import remarkGfm from "remark-gfm";
 import { z } from "zod";
@@ -21,6 +21,7 @@ export interface DisplayMessage {
   citations?: Array<z.infer<typeof CitationSchema>>;
   error?: string | null;
   traceId?: string;
+  feedback?: "up" | "down" | null;
 }
 
 interface MessageItemProps {
@@ -28,6 +29,7 @@ interface MessageItemProps {
   streaming?: boolean;
   onCitationClick?: (chunkId: string) => void;
   onRetry?: () => void;
+  onFeedback?: (messageId: string, feedback: "up" | "down" | null) => void;
 }
 
 function parseCitations(raw: unknown): Array<z.infer<typeof CitationSchema>> {
@@ -39,9 +41,18 @@ function parseCitations(raw: unknown): Array<z.infer<typeof CitationSchema>> {
     .map((r) => r.data);
 }
 
-export function MessageItem({ message, streaming, onCitationClick, onRetry }: MessageItemProps) {
+export function MessageItem({ message, streaming, onCitationClick, onRetry, onFeedback }: MessageItemProps) {
   const isUser = message.role === "user";
   const citations = parseCitations(message.citations);
+  const canFeedback =
+    !isUser && message.role === "assistant" && message.status === "complete" && !!message.serverId;
+
+  const submitFeedback = (value: "up" | "down") => {
+    if (!message.serverId || !onFeedback) return;
+    // 再点同一按钮 = 取消反馈
+    const next = message.feedback === value ? null : value;
+    onFeedback(message.serverId, next);
+  };
 
   return (
     <div className={cn("flex gap-3 animate-fade-up", isUser && "flex-row-reverse")}>
@@ -83,8 +94,8 @@ export function MessageItem({ message, streaming, onCitationClick, onRetry }: Me
             )}
           </div>
         )}
-        {!isUser && citations.length > 0 && (
-          <div className="flex flex-wrap gap-1">
+        {!isUser && (citations.length > 0 || canFeedback) && (
+          <div className="flex items-center gap-1">
             {citations.map((c, i) => (
               <button
                 key={c.chunk_id}
@@ -96,6 +107,38 @@ export function MessageItem({ message, streaming, onCitationClick, onRetry }: Me
                 [{i + 1}]
               </button>
             ))}
+            {canFeedback && (
+              <span className="ml-auto flex items-center gap-1">
+                <button
+                  type="button"
+                  aria-label="回答有用"
+                  title="回答有用"
+                  onClick={() => submitFeedback("up")}
+                  className={cn(
+                    "rounded-md p-1 transition-colors cursor-pointer",
+                    message.feedback === "up"
+                      ? "bg-green-100 text-green-600"
+                      : "text-slate-400 hover:bg-slate-100 hover:text-green-600",
+                  )}
+                >
+                  <ThumbsUp size={14} />
+                </button>
+                <button
+                  type="button"
+                  aria-label="回答无用"
+                  title="回答无用"
+                  onClick={() => submitFeedback("down")}
+                  className={cn(
+                    "rounded-md p-1 transition-colors cursor-pointer",
+                    message.feedback === "down"
+                      ? "bg-red-100 text-red-600"
+                      : "text-slate-400 hover:bg-slate-100 hover:text-red-600",
+                  )}
+                >
+                  <ThumbsDown size={14} />
+                </button>
+              </span>
+            )}
           </div>
         )}
         {message.status === "pending_confirm" && (

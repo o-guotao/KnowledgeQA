@@ -31,7 +31,7 @@ from app.schemas.chat import (
     ToolCallEvent,
     UsageEvent,
 )
-from app.services import cost, injection
+from app.services import cost, injection, langfuse_tracing
 from app.services.deepseek import ModelCallError, ModelTimeoutError
 from app.services.embedding import embed_query
 from app.services.rag import build_rag_prompt, retrieve
@@ -123,13 +123,14 @@ async def _event_stream(
             provider: ProviderConfig = await resolve_provider_config(db, user.id)
 
         # ---- RAG 召回（按用户隔离），失败降级为空召回 ----
-        try:
-            query_vec = await embed_query(body.content)
-            async with SessionLocal() as db:
-                chunks = await retrieve(db, user.id, query_vec, query_text=body.content)
-        except Exception as exc:
-            logger.warning("retrieve degraded: %s", exc, extra={"event": "rag_degraded"})
-            chunks = []
+        with langfuse_tracing.trace_span(trace_id, "retrieve", {"query": body.content[:200]}):
+            try:
+                query_vec = await embed_query(body.content)
+                async with SessionLocal() as db:
+                    chunks = await retrieve(db, user.id, query_vec, query_text=body.content)
+            except Exception as exc:
+                logger.warning("retrieve degraded: %s", exc, extra={"event": "rag_degraded"})
+                chunks = []
         injection.scan_chunks([c.content for c in chunks])
 
         for c in chunks:
@@ -238,6 +239,13 @@ async def _event_stream(
             citations=citations,
             usage={**(usage or {}), "cost_cny": cost_cny} if usage else None,
         )
+        # Langfuse 记录完整生成（输出 + token usage），供成本与质量分析
+        langfuse_tracing.trace_generation(
+            trace_id, "chat_completion", provider.model_name, messages,
+            "".join(content_parts), usage,
+            metadata={"session_id": str(body.session_id), "citations": len(citations)},
+        )
+        langfuse_tracing.flush()
         yield _sse(DoneEvent(trace_id=trace_id, message_id=assistant_id))
 
     except _ClientGone:

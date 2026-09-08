@@ -5,6 +5,7 @@ from sqlalchemy import JSON, DateTime, Float, ForeignKey, Integer, String, Text,
 from sqlalchemy.orm import Mapped, mapped_column
 
 from app.db import Base
+from app.storage_compat import UUIDType
 
 # 状态机：pending -> running -> done / failed(重试) -> dead(超过 max_retries)
 TASK_STATUSES = ("pending", "running", "done", "failed", "dead")
@@ -13,7 +14,7 @@ TASK_STATUSES = ("pending", "running", "done", "failed", "dead")
 class Task(Base):
     __tablename__ = "tasks"
 
-    id: Mapped[uuid.UUID] = mapped_column(primary_key=True, default=uuid.uuid4)
+    id: Mapped[uuid.UUID] = mapped_column(UUIDType(), primary_key=True, default=uuid.uuid4)
     type: Mapped[str] = mapped_column(String(32))  # ingest_document | demo_fail
     payload: Mapped[dict] = mapped_column(JSON, default=dict)
     status: Mapped[str] = mapped_column(String(16), default="pending", index=True)
@@ -26,6 +27,6 @@ class Task(Base):
     error: Mapped[str | None] = mapped_column(Text, nullable=True)
     trace_id: Mapped[str] = mapped_column(String(32), default="")
     user_id: Mapped[uuid.UUID | None] = mapped_column(
-        ForeignKey("users.id", ondelete="SET NULL"), nullable=True
+        UUIDType(), ForeignKey("users.id", ondelete="SET NULL"), nullable=True
     )
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now())

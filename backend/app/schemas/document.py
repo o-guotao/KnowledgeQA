@@ -1,13 +1,15 @@
 import uuid
 from datetime import datetime
 
-from pydantic import BaseModel
+from pydantic import BaseModel, Field
 
 
 class DocumentOut(BaseModel):
     id: uuid.UUID
     filename: str
     content_hash: str | None
+    folder: str = ""
+    tags: list = []
     status: str
     chunk_size: int
     chunk_overlap: int
@@ -17,6 +19,20 @@ class DocumentOut(BaseModel):
     updated_at: datetime
 
     model_config = {"from_attributes": True}
+
+
+class DocumentUpdate(BaseModel):
+    folder: str | None = Field(default=None, max_length=128)
+    tags: list[str] | None = None
+
+
+class BatchDeleteRequest(BaseModel):
+    document_ids: list[uuid.UUID] = Field(min_length=1, max_length=200)
+
+
+class BatchDeleteResponse(BaseModel):
+    deleted: int
+    failed: list[uuid.UUID] = []
 
 
 class ChunkOut(BaseModel):

@@ -73,9 +73,13 @@ export function DocumentsPage() {
   const [uploading, setUploading] = useState(false);
   const [preview, setPreview] = useState<KnowledgeDocument | null>(null);
   const fileRef = useRef<HTMLInputElement>(null);
+  // 本批上传的归属（文件夹/标签）与列表过滤
+  const [uploadFolder, setUploadFolder] = useState("");
+  const [uploadTags, setUploadTags] = useState("");
+  const [filterFolder, setFilterFolder] = useState<string | null>(null);
 
   const refresh = useCallback(() => {
-    get("/documents", z.array(DocumentSchema))
+    get<KnowledgeDocument[]>("/documents", z.array(DocumentSchema))
       .then(setDocs)
       .catch((err) => console.error("documents fetch failed", err));
   }, []);
@@ -144,7 +148,9 @@ export function DocumentsPage() {
       try {
         const form = new FormData();
         form.append("file", item.file);
-        const created = await postForm("/documents", form, DocumentSchema);
+        if (uploadFolder.trim()) form.append("folder", uploadFolder.trim());
+        if (uploadTags.trim()) form.append("tags", uploadTags.trim());
+        const created = await postForm<KnowledgeDocument>("/documents", form, DocumentSchema);
         setDocs((prev) => [created, ...prev]);
         setQueue((prev) => prev.filter((x) => x.id !== item.id));
       } catch (err) {
@@ -181,6 +187,10 @@ export function DocumentsPage() {
   const failedCount = docs.filter((d) => d.status === "failed").length;
   const noTextCount = docs.filter((d) => d.status === "no_text").length;
   const busy = uploading;
+
+  // 文件夹过滤：全部非空 folder 去重排序；filterFolder 为 null 表示不过滤
+  const folders = Array.from(new Set(docs.map((d) => d.folder).filter((f) => f))).sort();
+  const filteredDocs = filterFolder === null ? docs : docs.filter((d) => d.folder === filterFolder);
 
   return (
     <main className="min-h-screen bg-slate-50 px-4 py-8 sm:px-8">
@@ -233,6 +243,29 @@ export function DocumentsPage() {
           合规文档自动切分入库，之后即可在问答中检索并带引用回答。
           {pendingCount > 0 && " 有文档正在处理，将自动刷新直到完成。"}
         </p>
+
+        {/* 本批上传归属：文件夹与标签（可选） */}
+        <div className="flex flex-wrap items-center gap-3 rounded-lg border border-slate-200 bg-white px-4 py-3 text-sm">
+          <label className="flex items-center gap-2 text-slate-600">
+            文件夹
+            <input
+              value={uploadFolder}
+              onChange={(e) => setUploadFolder(e.target.value)}
+              placeholder="如：制度/人事"
+              className="w-40 rounded-md border border-slate-300 px-2 py-1 text-sm focus:border-brand focus:outline-none"
+            />
+          </label>
+          <label className="flex items-center gap-2 text-slate-600">
+            标签
+            <input
+              value={uploadTags}
+              onChange={(e) => setUploadTags(e.target.value)}
+              placeholder="逗号分隔，如：报销,流程"
+              className="w-56 rounded-md border border-slate-300 px-2 py-1 text-sm focus:border-brand focus:outline-none"
+            />
+          </label>
+          <span className="text-xs text-slate-400">应用于本批上传，便于分类与检索</span>
+        </div>
 
         {/* 待上传/上传结果面板 */}
         {queue.length > 0 && (
@@ -301,8 +334,24 @@ export function DocumentsPage() {
           </Card>
         )}
 
-        <div className="flex flex-wrap gap-2 text-sm">
-          <span className="rounded-full bg-slate-100 px-3 py-1 text-slate-600">全部 {docs.length}</span>
+        <div className="flex flex-wrap items-center gap-2 text-sm">
+          <button
+            type="button"
+            onClick={() => setFilterFolder(null)}
+            className={`rounded-full px-3 py-1 cursor-pointer transition-colors ${filterFolder === null ? "bg-brand text-white" : "bg-slate-100 text-slate-600 hover:bg-slate-200"}`}
+          >
+            全部 {docs.length}
+          </button>
+          {folders.map((f) => (
+            <button
+              key={f}
+              type="button"
+              onClick={() => setFilterFolder(filterFolder === f ? null : f)}
+              className={`rounded-full px-3 py-1 cursor-pointer transition-colors ${filterFolder === f ? "bg-brand text-white" : "bg-indigo-50 text-indigo-700 hover:bg-indigo-100"}`}
+            >
+              {f}
+            </button>
+          ))}
           <span className="rounded-full bg-emerald-50 px-3 py-1 text-emerald-700">已入库 {readyCount}</span>
           {pendingCount > 0 && (
             <span className="rounded-full bg-amber-50 px-3 py-1 text-amber-700">处理中 {pendingCount}</span>
@@ -327,7 +376,7 @@ export function DocumentsPage() {
               </CardContent>
             </Card>
           ) : (
-            docs.map((d) => {
+            filteredDocs.map((d) => {
               const meta = STATUS_META[d.status];
               const sideText =
                 d.status === "ready"
@@ -339,9 +388,17 @@ export function DocumentsPage() {
                 <Card key={d.id}>
                   <CardContent className="flex flex-col gap-2 py-4 sm:flex-row sm:items-center sm:justify-between">
                     <div className="min-w-0">
-                      <div className="flex items-center gap-2">
+                      <div className="flex flex-wrap items-center gap-2">
                         <p className="truncate font-medium text-ink">{d.filename}</p>
                         <Badge variant={meta.variant}>{meta.label}</Badge>
+                        {d.folder && (
+                          <span className="rounded bg-indigo-50 px-1.5 py-0.5 text-xs text-indigo-600">{d.folder}</span>
+                        )}
+                        {d.tags.map((t) => (
+                          <span key={t} className="rounded bg-slate-100 px-1.5 py-0.5 text-xs text-slate-500">
+                            #{t}
+                          </span>
+                        ))}
                       </div>
                       <p className="mt-1 text-xs text-slate-400">
                         {fmtTime(d.created_at)}

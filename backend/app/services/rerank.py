@@ -45,8 +45,9 @@ async def rerank(query: str, candidates: list, top_k: int) -> list:
 
     def _score_sync() -> list[float]:
         model = _load_reranker()
-        pairs = [(query, c.content) for c in candidates]
-        return [float(s) for s in model.rerank(pairs)]
+        # fastembed 0.8 签名：rerank(query, documents) -> scores
+        documents = [c.content for c in candidates]
+        return [float(s) for s in model.rerank(query, documents)]
 
     try:
         scores = await asyncio.to_thread(_score_sync)

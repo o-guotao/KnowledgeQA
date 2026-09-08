@@ -7,4 +7,4 @@ from app.models.session import Session
 from app.models.task import Task
 from app.models.user import User
 
-__all__ = ["Chunk", "Document", "Message", "Quota", "Session", "Task", "User"]
+__all__ = ["Chunk", "Document", "Message", "ModelConfig", "Quota", "Session", "Task", "User"]

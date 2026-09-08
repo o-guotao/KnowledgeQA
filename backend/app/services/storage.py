@@ -1,6 +1,7 @@
-"""MinIO 对象存储客户端（懒加载）。"""
+"""对象存储抽象：minio（生产）或 local 本地文件夹（开发演示），按 STORAGE_BACKEND 切换。"""
 import asyncio
 import io
+from pathlib import Path
 
 from app.config import get_settings
 
@@ -24,6 +25,11 @@ def _get_client():
 
 async def put_object(object_key: str, data: bytes, content_type: str = "application/octet-stream") -> None:
     settings = get_settings()
+    if settings.storage_backend == "local":
+        path = Path(settings.local_storage_dir) / object_key
+        path.parent.mkdir(parents=True, exist_ok=True)
+        path.write_bytes(data)
+        return
 
     def _put():
         client = _get_client()
@@ -38,6 +44,8 @@ async def put_object(object_key: str, data: bytes, content_type: str = "applicat
 
 async def get_object(object_key: str) -> bytes:
     settings = get_settings()
+    if settings.storage_backend == "local":
+        return (Path(settings.local_storage_dir) / object_key).read_bytes()
 
     def _get() -> bytes:
         response = _get_client().get_object(settings.minio_bucket, object_key)
@@ -52,6 +60,11 @@ async def get_object(object_key: str) -> bytes:
 
 async def delete_object(object_key: str) -> None:
     settings = get_settings()
+    if settings.storage_backend == "local":
+        path = Path(settings.local_storage_dir) / object_key
+        if path.exists():
+            path.unlink()
+        return
 
     def _delete():
         _get_client().remove_object(settings.minio_bucket, object_key)

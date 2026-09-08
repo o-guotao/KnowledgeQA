@@ -36,7 +36,6 @@ export function ChatPage() {
   const [quotaRefreshKey, setQuotaRefreshKey] = useState(0);
   const [quotaExhausted, setQuotaExhausted] = useState(false);
   const [sidebarOpen, setSidebarOpen] = useState(false);
-  const lastQuestionRef = useRef<string>("");
   // 正在本地流式作答的会话 id：activeId 切换会触发历史加载，需据此跳过以免清掉乐观消息
   const turnSessionRef = useRef<string | null>(null);
   // 该在途会话的乐观消息当前是否正显示在列表中（中途切走再切回时已非乐观列表，须走真实历史加载）
@@ -74,12 +73,14 @@ export function ChatPage() {
             .filter((m) => m.status !== "streaming")
             .map((m) => ({
               id: m.id,
+              serverId: m.id,
               role: m.role,
               content: m.content,
               status: m.status,
               citations: (m.citations ?? undefined) as DisplayMessage["citations"],
               error: m.error,
               traceId: m.trace_id,
+              feedback: m.feedback ?? null,
             })),
         );
       })
@@ -94,6 +95,24 @@ export function ChatPage() {
   useEffect(() => {
     bottomRef.current?.scrollIntoView({ behavior: "smooth" });
   }, [messages]);
+
+  // 答案反馈：调后端并更新本地消息的 feedback 态（再点同值=取消）
+  const handleFeedback = useCallback(
+    async (messageId: string, feedback: "up" | "down" | null) => {
+      try {
+        await post(`/messages/${messageId}/feedback`, { feedback }, z.object({
+          message_id: z.string(),
+          feedback: z.enum(["up", "down"]).nullable(),
+        }));
+        setMessages((prev) =>
+          prev.map((m) => (m.serverId === messageId ? { ...m, feedback } : m)),
+        );
+      } catch (err) {
+        console.error("feedback failed", err);
+      }
+    },
+    [],
+  );
 
   const createSession = useCallback(async () => {
     const session = await post("/sessions", { title: "新会话" }, SessionSchema);
@@ -181,7 +200,6 @@ export function ChatPage() {
       // 先登记在途会话，再切 activeId/追加乐观消息：历史加载 effect 据此跳过，不覆盖本轮
       turnSessionRef.current = sessionId;
       if (!activeId) setActiveId(sessionId);
-      lastQuestionRef.current = content;
       const assistantLocalId = nextLocalId();
       setMessages((prev) => [
         ...prev,
@@ -296,13 +314,26 @@ export function ChatPage() {
                 <p className="mx-auto mt-2 max-w-md leading-6">上传制度、手册或 FAQ 后直接提问。每条回答都会标出可回溯的原文引用。</p>
               </div>
             )}
-            {messages.map((m) => (
+            {messages.map((m, idx) => (
               <MessageItem
                 key={m.id}
                 message={m}
                 streaming={m.status === "local_streaming"}
                 onCitationClick={setActiveCitation}
-                onRetry={m.status === "failed" ? () => void ask(lastQuestionRef.current) : undefined}
+                onRetry={
+                  m.status === "failed"
+                    ? () => {
+                        // 用该失败回复之前最近的用户提问重试：lastQuestionRef 在页面刷新后丢失，
+                        // 会以空 content 触发 422；且多轮失败时无法对应各自提问。
+                        const question = messages
+                          .slice(0, idx)
+                          .reverse()
+                          .find((x) => x.role === "user")?.content;
+                        if (question) void ask(question);
+                      }
+                    : undefined
+                }
+                onFeedback={handleFeedback}
               />
             ))}
             <div ref={bottomRef} />

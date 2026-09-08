@@ -67,6 +67,7 @@ export const MessageSchema = z.object({
   tool_call: z.record(z.unknown()).nullable(),
   usage: z.record(z.unknown()).nullable(),
   error: z.string().nullable(),
+  feedback: z.enum(["up", "down"]).nullable().optional(),
   created_at: z.string(),
 });
 export type Message = z.infer<typeof MessageSchema>;
@@ -76,6 +77,8 @@ export const DocumentSchema = z.object({
   id: z.string().uuid(),
   filename: z.string(),
   content_hash: z.string().nullable(),
+  folder: z.string().default(""),
+  tags: z.array(z.string()).default([]),
   status: z.enum(["uploaded", "processing", "ready", "failed", "no_text"]),
   chunk_size: z.number(),
   chunk_overlap: z.number(),
@@ -85,6 +88,15 @@ export const DocumentSchema = z.object({
   updated_at: z.string(),
 });
 export type KnowledgeDocument = z.infer<typeof DocumentSchema>;
+
+export const FeedbackStatsSchema = z.object({
+  total_answered: z.number(),
+  up_count: z.number(),
+  down_count: z.number(),
+  feedback_total: z.number(),
+  down_rate: z.number(),
+});
+export type FeedbackStats = z.infer<typeof FeedbackStatsSchema>;
 
 export const ChunkSchema = z.object({
   id: z.string().uuid(),

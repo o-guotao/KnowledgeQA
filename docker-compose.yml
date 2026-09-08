@@ -67,6 +67,7 @@ services:
       FASTEMBED_CACHE_PATH: /data/models
       MODEL_CONFIG_ENCRYPTION_KEY: ${MODEL_CONFIG_ENCRYPTION_KEY:-}
       ENVIRONMENT: ${ENVIRONMENT:-production}
+      DEPLOY_PROFILE: ${DEPLOY_PROFILE:-production}
     ports:
       - "8000:8000"
     volumes:
@@ -96,6 +97,7 @@ services:
       FASTEMBED_CACHE_PATH: /data/models
       MODEL_CONFIG_ENCRYPTION_KEY: ${MODEL_CONFIG_ENCRYPTION_KEY:-}
       ENVIRONMENT: ${ENVIRONMENT:-production}
+      DEPLOY_PROFILE: ${DEPLOY_PROFILE:-production}
     volumes:
       - modelcache:/data/models
     depends_on:

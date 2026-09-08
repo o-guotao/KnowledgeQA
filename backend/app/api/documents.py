@@ -3,7 +3,7 @@ import logging
 import uuid
 from urllib.parse import quote
 
-from fastapi import APIRouter, Depends, UploadFile
+from fastapi import APIRouter, Depends, Form, UploadFile
 from fastapi.responses import Response
 from sqlalchemy import select
 from sqlalchemy.exc import IntegrityError
@@ -18,7 +18,13 @@ from app.models.chunk import Chunk
 from app.models.document import Document
 from app.models.task import Task
 from app.models.user import User
-from app.schemas.document import ChunkOut, DocumentOut
+from app.schemas.document import (
+    BatchDeleteRequest,
+    BatchDeleteResponse,
+    ChunkOut,
+    DocumentOut,
+    DocumentUpdate,
+)
 from app.services.storage import delete_object, get_object, put_object
 
 logger = logging.getLogger(__name__)
@@ -57,6 +63,8 @@ def _normalize_filename(raw: str) -> str:
 @router.post("/documents", response_model=DocumentOut, status_code=201)
 async def upload_document(
     file: UploadFile,
+    folder: str = Form(""),
+    tags: str = Form(""),
     db: AsyncSession = Depends(get_db),
     user: User = Depends(get_current_user),
 ) -> DocumentOut:
@@ -94,10 +102,13 @@ async def upload_document(
             status = "no_text"
 
     settings = get_settings()
+    tag_list = [t.strip() for t in tags.split(",") if t.strip()][:20]
     document = Document(
         user_id=user.id,
         filename=filename,
         content_hash=content_hash,
+        folder=folder.strip()[:128],
+        tags=tag_list,
         object_key="",
         status=status,
         chunk_size=settings.chunk_size,
@@ -131,14 +142,84 @@ async def upload_document(
 
 @router.get("/documents", response_model=list[DocumentOut])
 async def list_documents(
-    db: AsyncSession = Depends(get_db), user: User = Depends(get_current_user)
+    folder: str | None = None,
+    db: AsyncSession = Depends(get_db),
+    user: User = Depends(get_current_user),
 ) -> list[DocumentOut]:
+    stmt = select(Document).where(Document.user_id == user.id)
+    if folder is not None:
+        stmt = stmt.where(Document.folder == folder)
     rows = (
-        await db.execute(
-            select(Document).where(Document.user_id == user.id).order_by(Document.created_at.desc())
-        )
+        await db.execute(stmt.order_by(Document.folder.asc(), Document.created_at.desc()))
     ).scalars().all()
     return [DocumentOut.model_validate(d) for d in rows]
+
+
+@router.get("/documents/folders", response_model=list[str])
+async def list_folders(
+    db: AsyncSession = Depends(get_db), user: User = Depends(get_current_user)
+) -> list[str]:
+    """当前用户用到过的全部文件夹（去重，含空字符串根目录）。"""
+    rows = (
+        await db.execute(
+            select(Document.folder).where(Document.user_id == user.id).distinct()
+        )
+    ).scalars().all()
+    return sorted(rows)
+
+
+@router.patch("/documents/{document_id}", response_model=DocumentOut)
+async def update_document(
+    document_id: uuid.UUID,
+    body: DocumentUpdate,
+    db: AsyncSession = Depends(get_db),
+    user: User = Depends(get_current_user),
+) -> DocumentOut:
+    """更新文档的文件夹与标签（不触发重新切分）。"""
+    document = (
+        await db.execute(
+            select(Document).where(Document.id == document_id, Document.user_id == user.id)
+        )
+    ).scalar_one_or_none()
+    if document is None:
+        raise not_found("文档")
+    if body.folder is not None:
+        document.folder = body.folder.strip()[:128]
+    if body.tags is not None:
+        document.tags = [t.strip() for t in body.tags if t.strip()][:20]
+    await db.commit()
+    await db.refresh(document)
+    return DocumentOut.model_validate(document)
+
+
+@router.post("/documents/batch-delete", response_model=BatchDeleteResponse)
+async def batch_delete_documents(
+    body: BatchDeleteRequest,
+    db: AsyncSession = Depends(get_db),
+    user: User = Depends(get_current_user),
+) -> BatchDeleteResponse:
+    """批量删除文档：逐个级联删除 chunks 与对象存储，失败的收集返回。"""
+    deleted = 0
+    failed: list[uuid.UUID] = []
+    for doc_id in body.document_ids:
+        document = (
+            await db.execute(
+                select(Document).where(Document.id == doc_id, Document.user_id == user.id)
+            )
+        ).scalar_one_or_none()
+        if document is None:
+            failed.append(doc_id)
+            continue
+        object_key = document.object_key
+        await db.delete(document)
+        deleted += 1
+        if object_key:
+            try:
+                await delete_object(object_key)
+            except Exception:
+                logger.warning("批量删除对象失败: %s", object_key, exc_info=True)
+    await db.commit()
+    return BatchDeleteResponse(deleted=deleted, failed=failed)
 
 
 @router.get("/documents/{document_id}", response_model=DocumentOut)

@@ -1,14 +1,18 @@
 """文档文本提取与切分。
 
-切分策略：优先按段落/句子边界切，保证 chunk 语义完整；
+切分策略：
+- window：滑动窗口，按段落/句子边界切，保证 chunk 语义完整
+- semantic：语义分块，按 Markdown 标题层级切父块（上下文完整），
+  父块内再切小块（child，用于 embedding 召回）——小块召回 + 大块上下文
 chunk_size/overlap 可配，评测时调整这两参数观察指标升降。
 """
 import io
 import re
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 
 _SENTENCE_END = re.compile(r"[。！？!?；;\n]")
 _HARD_BREAK = re.compile(r"\n{2,}|\r\n{2,}")
+_HEADING = re.compile(r"^(#{1,6})\s+\S", re.MULTILINE)
 
 
 @dataclass
@@ -17,6 +21,13 @@ class ChunkData:
     content: str
     start_offset: int
     end_offset: int
+
+
+@dataclass
+class SemanticBlock:
+    """语义分块结果：一个父块（上下文）+ 其下多个子块（用于 embedding 召回）。"""
+    parent_content: str
+    children: list[ChunkData] = field(default_factory=list)
 
 
 def extract_text(filename: str, data: bytes) -> str:
@@ -71,3 +82,41 @@ def split_text(text: str, chunk_size: int, overlap: int) -> list[ChunkData]:
         while start < n and start > 0 and text[start].isspace():
             start += 1
     return chunks
+
+
+def _split_by_headings(text: str) -> list[str]:
+    """按 Markdown 标题切分为大段（保留标题）。无标题时返回全文为单段。"""
+    matches = list(_HEADING.finditer(text))
+    if not matches:
+        return [text] if text.strip() else []
+    sections: list[str] = []
+    # 标题前的内容（若有）
+    if matches[0].start() > 0 and text[: matches[0].start()].strip():
+        sections.append(text[: matches[0].start()])
+    for i, m in enumerate(matches):
+        end = matches[i + 1].start() if i + 1 < len(matches) else len(text)
+        sections.append(text[m.start():end])
+    return [s for s in sections if s.strip()]
+
+
+def split_semantic(text: str, child_size: int, child_overlap: int, parent_max: int = 1200) -> list[SemanticBlock]:
+    """语义分块：按标题层级切父块，父块内再切小块（child 用于 embedding 召回）。
+
+    - 父块提供完整上下文（注入 prompt），过大父块会再按标题/窗口拆分
+    - 子块是 embedding 与召回的粒度，召回后回取父块上下文
+    """
+    blocks: list[SemanticBlock] = []
+    sections = _split_by_headings(text)
+    for section in sections:
+        # 父块过大：先尝试作为单父块，内容超 parent_max 时按窗口切成多个父块
+        if len(section) <= parent_max:
+            parents = [section]
+        else:
+            parents = [c.content for c in split_text(section, parent_max, parent_max // 6)]
+        for parent in parents:
+            parent = parent.strip()
+            if not parent:
+                continue
+            children = split_text(parent, child_size, child_overlap)
+            blocks.append(SemanticBlock(parent_content=parent, children=children))
+    return blocks

@@ -1,0 +1,10 @@
+{"q": "想请几天年假，流程上要怎么操作？", "gold_doc": "员工手册.md", "gold_keywords": ["OA", "提前"]}
+{"q": "出差住酒店一晚上最多能报多少钱？", "gold_doc": "员工手册.md", "gold_keywords": ["450", "600"]}
+{"q": "公司发的笔记本电脑坏了找谁处理？", "gold_doc": "IT服务指南.md", "gold_keywords": ["IT 服务台", "3 层", "备机"]}
+{"q": "内部的机密文件能不能用微信发给同事？", "gold_doc": "安全规范.md", "gold_keywords": ["禁止", "即时通讯"]}
+{"q": "早上忘记打卡了会不会扣钱？", "gold_doc": "员工手册.md", "gold_keywords": ["迟到", "3 次"]}
+{"q": "在家办公一周能有几天？", "gold_doc": "员工手册.md", "gold_keywords": ["2"]}
+{"q": "报销的钱一般多久能到账？", "gold_doc": "员工手册.md", "gold_keywords": ["7 个工作日"]}
+{"q": "电脑屏幕锁屏时间设多久符合规定？", "gold_doc": "安全规范.md", "gold_keywords": ["5 分钟"]}
+{"q": "星图导数据一次最多能导多少行？", "gold_doc": "产品FAQ.md", "gold_keywords": ["10 万"]}
+{"q": "申请报表查看权限要找谁批？", "gold_doc": "产品FAQ.md", "gold_keywords": ["主管", "数据 owner"]}

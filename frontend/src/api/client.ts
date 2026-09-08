@@ -30,7 +30,7 @@ export class ApiRequestError extends Error {
 
 async function request<T>(
   path: string,
-  schema: z.ZodType<T>,
+  schema: z.ZodType<T, z.ZodTypeDef, unknown>,
   init: RequestInit = {},
 ): Promise<T> {
   const headers = new Headers(init.headers);
@@ -67,14 +67,14 @@ async function request<T>(
   return parsed.data;
 }
 
-export async function get<T>(path: string, schema: z.ZodType<T>): Promise<T> {
+export async function get<T>(path: string, schema: z.ZodType<T, z.ZodTypeDef, unknown>): Promise<T> {
   return request(path, schema);
 }
 
 export async function post<T>(
   path: string,
   body: unknown,
-  schema: z.ZodType<T>,
+  schema: z.ZodType<T, z.ZodTypeDef, unknown>,
 ): Promise<T> {
   return request(path, schema, { method: "POST", body: JSON.stringify(body) });
 }
@@ -82,7 +82,7 @@ export async function post<T>(
 export async function postForm<T>(
   path: string,
   form: FormData,
-  schema: z.ZodType<T>,
+  schema: z.ZodType<T, z.ZodTypeDef, unknown>,
 ): Promise<T> {
   return request(path, schema, { method: "POST", body: form });
 }
@@ -90,7 +90,7 @@ export async function postForm<T>(
 export async function patch<T>(
   path: string,
   body: unknown,
-  schema: z.ZodType<T>,
+  schema: z.ZodType<T, z.ZodTypeDef, unknown>,
 ): Promise<T> {
   return request(path, schema, { method: "PATCH", body: JSON.stringify(body) });
 }

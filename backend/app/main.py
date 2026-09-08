@@ -39,6 +39,15 @@ async def _startup_checks() -> None:
     """
     import logging
 
+    # sqlite 本地模式：直接 create_all 建表（跳过 alembic）+ seed 演示账号
+    if settings.db_backend == "sqlite":
+        from app.db import create_all_tables
+        from scripts.seed import seed
+
+        await create_all_tables()
+        await seed()
+        logging.getLogger(__name__).info("sqlite mode: tables created + seeded")
+
     from app.services.embeddings import verify_embedding_ready
 
     ok, message = await verify_embedding_ready()
