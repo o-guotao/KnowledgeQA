@@ -10,23 +10,23 @@ export default {
         sans: ["PingFang SC", "Microsoft YaHei", "system-ui", "sans-serif"],
       },
       colors: {
+        // 全部走 CSS 变量（RGB 三元组），:root=深色，html.light=浅色，见 index.css
         brand: {
-          DEFAULT: "#2563EB",
-          dark: "#1E40AF",
-          light: "#3B82F6",
+          DEFAULT: "rgb(var(--brand) / <alpha-value>)",
+          dark: "rgb(var(--brand-dark) / <alpha-value>)",
+          light: "rgb(var(--brand-light) / <alpha-value>)",
         },
         ink: "#0F172A",
         muted: "#475569",
         surface: "#F8FAFC",
-        // 钢蓝灰主题（仿目标截图的中明度蓝灰）
         theme: {
-          bg: "#14161b",
-          deep: "#0f1114",
-          card: "#1f232b",
-          input: "#1b1f27",
-          line: "rgba(255,255,255,0.10)",
-          text: "#e9ecf1",
-          sub: "#9aa3b2",
+          bg: "rgb(var(--theme-bg) / <alpha-value>)",
+          deep: "rgb(var(--theme-deep) / <alpha-value>)",
+          card: "rgb(var(--theme-card) / <alpha-value>)",
+          input: "rgb(var(--theme-input) / <alpha-value>)",
+          line: "rgb(var(--theme-line) / <alpha-value>)",
+          text: "rgb(var(--theme-text) / <alpha-value>)",
+          sub: "rgb(var(--theme-sub) / <alpha-value>)",
         },
       },
       boxShadow: {

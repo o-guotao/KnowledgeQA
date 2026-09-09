@@ -16,6 +16,7 @@ import { CitationPanel } from "../components/CitationPanel";
 import { MessageItem, type DisplayMessage } from "../components/MessageItem";
 import { QuotaBadge } from "../components/QuotaBadge";
 import { SessionList } from "../components/SessionList";
+import { ThemeToggle } from "../components/ThemeToggle";
 import { ToolConfirmDialog } from "../components/ToolConfirmDialog";
 import { useChatStream } from "../hooks/useChatStream";
 
@@ -251,7 +252,7 @@ export function ChatPage() {
     <div className="flex h-dvh overflow-hidden bg-theme-deep">
       {sidebarOpen && <button type="button" aria-label="关闭导航" onClick={() => setSidebarOpen(false)} className="fixed inset-0 z-20 bg-slate-950/40 lg:hidden" />}
       <aside className={`fixed inset-y-0 left-0 z-30 flex w-80 -translate-x-full flex-col gap-5 overflow-y-auto border-r border-white/5 bg-gradient-to-b from-theme-deep via-theme-deep to-theme-bg p-4 shadow-2xl transition-transform lg:static lg:w-72 lg:translate-x-0 lg:shadow-none ${sidebarOpen ? "translate-x-0" : ""}`}>
-        <div className="flex items-center justify-between px-1 text-white"><div className="flex items-center gap-2 text-lg font-semibold"><BookOpenText size={21} className="text-brand-light" />内知</div><button type="button" className="rounded-md p-1 text-slate-400 hover:bg-white/10 lg:hidden" aria-label="关闭导航" onClick={() => setSidebarOpen(false)}><X size={18} /></button></div>
+        <div className="flex items-center justify-between px-1 text-theme-text"><div className="flex items-center gap-2 text-lg font-semibold"><BookOpenText size={21} className="text-brand-light" />内知</div><button type="button" className="rounded-md p-1 text-slate-400 hover:bg-white/10 lg:hidden" aria-label="关闭导航" onClick={() => setSidebarOpen(false)}><X size={18} /></button></div>
         <p className="-mt-3 px-1 text-xs text-slate-500">KnowledgeQA · 内部知识助手</p>
         <nav className="flex flex-col gap-1 border-b border-white/10 pb-3" aria-label="主导航">
           {[
@@ -270,7 +271,7 @@ export function ChatPage() {
                   navigate(to);
                 }}
                 aria-current={active ? "page" : undefined}
-                className={`flex items-center gap-2.5 rounded-md px-2.5 py-2 text-left text-sm cursor-pointer transition-colors ${active ? "bg-white/10 font-medium text-white" : "text-slate-400 hover:bg-white/5 hover:text-white"}`}
+                className={`flex items-center gap-2.5 rounded-md px-2.5 py-2 text-left text-sm cursor-pointer transition-colors ${active ? "bg-white/10 font-medium text-theme-text" : "text-slate-400 hover:bg-white/5 hover:text-white"}`}
               >
                 <Icon size={16} className="shrink-0" />
                 {label}
@@ -324,8 +325,11 @@ export function ChatPage() {
       {/* 对话主区 */}
       <main className="flex min-w-0 flex-1 flex-col bg-gradient-to-b from-theme-bg via-theme-bg to-theme-deep">
         <header className="flex h-16 shrink-0 items-center justify-between border-b border-theme-line bg-theme-bg/70 px-4 backdrop-blur-xl sm:px-6">
-          <div className="flex items-center gap-3"><button type="button" aria-label="打开导航" onClick={() => setSidebarOpen(true)} className="rounded-lg p-2 text-slate-300 hover:bg-white/10 lg:hidden"><Menu size={20} /></button><div><p className="text-sm font-semibold tracking-tight text-slate-100">知识问答</p><p className="hidden text-xs text-slate-500 sm:block">基于已入库文档生成带引用的回答</p></div></div>
-          <span className="flex items-center gap-1.5 rounded-full border border-emerald-500/30 bg-emerald-500/10 px-2.5 py-1 text-xs font-medium text-emerald-400"><span className="h-1.5 w-1.5 rounded-full bg-emerald-400" />服务就绪</span>
+          <div className="flex items-center gap-3"><button type="button" aria-label="打开导航" onClick={() => setSidebarOpen(true)} className="rounded-lg p-2 text-slate-300 hover:bg-white/10 lg:hidden"><Menu size={20} /></button><div><p className="text-sm font-semibold tracking-tight text-theme-text">知识问答</p><p className="hidden text-xs text-slate-500 sm:block">基于已入库文档生成带引用的回答</p></div></div>
+          <div className="flex items-center gap-2">
+            <ThemeToggle />
+            <span className="flex items-center gap-1.5 rounded-full border border-emerald-500/30 bg-emerald-500/10 px-2.5 py-1 text-xs font-medium text-emerald-400"><span className="h-1.5 w-1.5 rounded-full bg-emerald-400" />服务就绪</span>
+          </div>
         </header>
         <div className="flex-1 overflow-y-auto scrollbar-thin px-4 py-6 sm:px-6">
           <div className="mx-auto max-w-3xl space-y-6">

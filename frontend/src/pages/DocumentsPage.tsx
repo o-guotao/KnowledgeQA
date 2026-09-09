@@ -7,6 +7,7 @@ import { del, get, postForm } from "../api/client";
 import { DocumentSchema, type KnowledgeDocument } from "../api/schemas";
 import { ConfirmDialog } from "../components/ConfirmDialog";
 import { DocumentPreviewModal } from "../components/DocumentPreviewModal";
+import { ThemeToggle } from "../components/ThemeToggle";
 import { Badge } from "../components/ui/badge";
 import { Button } from "../components/ui/button";
 import { Card, CardContent } from "../components/ui/card";
@@ -246,6 +247,7 @@ export function DocumentsPage() {
             </div>
           </div>
           <div className="flex items-center gap-2">
+            <ThemeToggle />
             <Button
               variant="outline"
               size="sm"

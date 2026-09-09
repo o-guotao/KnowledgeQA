@@ -17,6 +17,7 @@ import {
 import { Button } from "../components/ui/button";
 import { Card, CardContent, CardHeader, CardTitle } from "../components/ui/card";
 import { ConfirmDialog } from "../components/ConfirmDialog";
+import { ThemeToggle } from "../components/ThemeToggle";
 import { Input } from "../components/ui/input";
 
 const fmtTokens = (n: number) => (n >= 10000 ? `${(n / 10000).toFixed(1)}万` : String(n));
@@ -107,9 +108,12 @@ export function AdminPage() {
   return (
     <main className="min-h-screen bg-gradient-to-b from-theme-bg via-theme-bg to-theme-deep px-4 py-8 sm:px-8">
       <div className="mx-auto max-w-6xl space-y-6">
-        <header className="flex items-center gap-3">
-          <Button variant="ghost" size="icon" aria-label="返回问答" onClick={() => navigate("/")}><ArrowLeft size={18} /></Button>
-          <div><p className="text-sm font-medium text-brand">管理后台</p><h1 className="text-2xl font-semibold tracking-tight text-theme-text">用量与用户管理</h1></div>
+        <header className="flex items-center justify-between gap-3">
+          <div className="flex items-center gap-3">
+            <Button variant="ghost" size="icon" aria-label="返回问答" onClick={() => navigate("/")}><ArrowLeft size={18} /></Button>
+            <div><p className="text-sm font-medium text-brand">管理后台</p><h1 className="text-2xl font-semibold tracking-tight text-theme-text">用量与用户管理</h1></div>
+          </div>
+          <ThemeToggle />
         </header>
         {(message || error) && (
           <div role="status" className={`rounded-lg border px-4 py-3 text-sm ${error ? "border-red-200 bg-red-50 text-red-700" : "border-emerald-200 bg-emerald-50 text-emerald-700"}`}>{error ?? message}</div>

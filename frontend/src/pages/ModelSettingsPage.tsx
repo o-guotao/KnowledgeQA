@@ -5,6 +5,7 @@ import { z } from "zod";
 
 import { del, get, patch, post } from "../api/client";
 import { ModelConfigSchema, ModelConfigTestResultSchema, type ModelConfig } from "../api/schemas";
+import { ThemeToggle } from "../components/ThemeToggle";
 import { Button } from "../components/ui/button";
 import { Card, CardContent, CardHeader, CardTitle } from "../components/ui/card";
 import { Input } from "../components/ui/input";
@@ -92,9 +93,12 @@ export function ModelSettingsPage() {
   return (
     <main className="min-h-screen bg-gradient-to-b from-theme-bg via-theme-bg to-theme-deep px-4 py-8 sm:px-8">
       <div className="mx-auto max-w-5xl space-y-6">
-        <header className="flex items-center gap-3">
-          <Button variant="ghost" size="icon" aria-label="返回问答" onClick={() => navigate("/")}><ArrowLeft size={18} /></Button>
-          <div><p className="text-sm font-medium text-brand">个人设置</p><h1 className="text-2xl font-semibold tracking-tight text-theme-text">模型配置</h1></div>
+        <header className="flex items-center justify-between gap-3">
+          <div className="flex items-center gap-3">
+            <Button variant="ghost" size="icon" aria-label="返回问答" onClick={() => navigate("/")}><ArrowLeft size={18} /></Button>
+            <div><p className="text-sm font-medium text-brand">个人设置</p><h1 className="text-2xl font-semibold tracking-tight text-theme-text">模型配置</h1></div>
+          </div>
+          <ThemeToggle />
         </header>
         <p className="max-w-3xl text-sm leading-6 text-theme-sub">每个配置使用 OpenAI Chat Completions 兼容接口。API Key 仅在保存时提交、由服务端加密，之后只显示脱敏值。</p>
         {(message || error) && <div role="status" className={`rounded-lg border px-4 py-3 text-sm ${error ? "border-red-200 bg-red-50 text-red-700" : "border-emerald-200 bg-emerald-50 text-emerald-700"}`}>{error ?? message}</div>}

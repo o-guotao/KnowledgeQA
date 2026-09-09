@@ -9,8 +9,10 @@ import { ModelSettingsPage } from "./pages/ModelSettingsPage";
 import type { ReactNode } from "react";
 
 function RequireAuth({ children }: { children: ReactNode }) {
-  const { token } = useAuth();
-  if (!token) return <Navigate to="/login" replace />;
+  const { user, loading } = useAuth();
+  // 会话恢复中（/auth/me 未返回）先等待，避免刷新瞬间误判未登录闪跳登录页
+  if (loading) return null;
+  if (!user) return <Navigate to="/login" replace />;
   return <>{children}</>;
 }
 

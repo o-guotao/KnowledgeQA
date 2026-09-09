@@ -6,22 +6,29 @@ import { z } from "zod";
 
 import { ApiErrorSchema } from "./schemas";
 
-const TOKEN_KEY = "web-agent-token";
-
 /**
  * 后端 API 基地址。默认空串 = 相对路径（与前端同源，由 EdgeOne Pages / 网关把 /api 反代到后端源站，免 CORS）；
  * 前端部署在独立域名、直连后端时设为后端完整地址（如 https://api.example.com），此时后端 CORS 需放行前端域名。
  */
 export const API_BASE: string = import.meta.env.VITE_API_BASE_URL ?? "";
 
+/**
+ * token 仅存内存（不落 localStorage，防 XSS 窃取）；刷新后由 HttpOnly Cookie 恢复会话。
+ * 跨域部署时 Cookie（SameSite=Lax）不会随请求携带，此时凭内存 token 走 Bearer 头。
+ */
+let memoryToken: string | null = null;
+
 export function getToken(): string | null {
-  return localStorage.getItem(TOKEN_KEY);
+  return memoryToken;
 }
-export function setToken(token: string): void {
-  localStorage.setItem(TOKEN_KEY, token);
+export function setToken(token: string | null): void {
+  memoryToken = token;
 }
-export function clearToken(): void {
-  localStorage.removeItem(TOKEN_KEY);
+
+/** 401 时广播，AuthContext 监听后清空用户态并跳回登录页 */
+function notifyUnauthorized(): void {
+  setToken(null);
+  window.dispatchEvent(new Event("auth:unauthorized"));
 }
 
 export class ApiRequestError extends Error {
@@ -46,7 +53,7 @@ async function request<T>(
     headers.set("Content-Type", "application/json");
   }
 
-  const response = await fetch(`${API_BASE}/api${path}`, { ...init, headers });
+  const response = await fetch(`${API_BASE}/api${path}`, { ...init, headers, credentials: "include" });
   if (!response.ok) {
     let code = "HTTP_" + response.status;
     let message = `请求失败（${response.status}）`;
@@ -60,7 +67,7 @@ async function request<T>(
     } catch {
       // 保留默认错误信息
     }
-    if (response.status === 401) clearToken();
+    if (response.status === 401) notifyUnauthorized();
     throw new ApiRequestError(code, message, response.status);
   }
   if (response.status === 204) return undefined as T;
@@ -110,7 +117,7 @@ export async function getFileBytes(documentId: string): Promise<ArrayBuffer> {
   const headers = new Headers();
   const token = getToken();
   if (token) headers.set("Authorization", `Bearer ${token}`);
-  const response = await fetch(`${API_BASE}/api/documents/${documentId}/file`, { headers });
+  const response = await fetch(`${API_BASE}/api/documents/${documentId}/file`, { headers, credentials: "include" });
   if (!response.ok) {
     // 与 request() 一致：尽量透出后端 detail.message（如 404「文档不存在」），否则回退通用文案
     let code = "HTTP_" + response.status;
@@ -125,7 +132,7 @@ export async function getFileBytes(documentId: string): Promise<ArrayBuffer> {
     } catch {
       // 响应非 JSON（网关/代理错误），保留默认错误信息
     }
-    if (response.status === 401) clearToken();
+    if (response.status === 401) notifyUnauthorized();
     throw new ApiRequestError(code, message, response.status);
   }
   return response.arrayBuffer();

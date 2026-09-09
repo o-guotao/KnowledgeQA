@@ -33,12 +33,14 @@ export function useChatStream(): ChatStream {
       abortRef.current = controller;
       setStreaming(true);
       try {
+        const headers: Record<string, string> = { "Content-Type": "application/json" };
+        // 有内存 token 走 Bearer（跨域部署），否则依赖同源 HttpOnly Cookie
+        const token = getToken();
+        if (token) headers.Authorization = `Bearer ${token}`;
         const response = await fetch(`${API_BASE}/api/chat/stream`, {
           method: "POST",
-          headers: {
-            "Content-Type": "application/json",
-            Authorization: `Bearer ${getToken() ?? ""}`,
-          },
+          headers,
+          credentials: "include",
           body: JSON.stringify({ session_id: sessionId, content, ...(topK ? { top_k: topK } : {}) }),
           signal: controller.signal,
         });

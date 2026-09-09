@@ -3,6 +3,32 @@
 @tailwind utilities;
 
 @layer base {
+  /* 深色主题（默认）：钢蓝灰 */
+  :root {
+    --brand: 37 99 235; /* #2563EB */
+    --brand-dark: 30 64 175; /* #1E40AF 悬停 */
+    --brand-light: 59 130 246; /* #3B82F6 弱强调文字 */
+    --theme-bg: 20 22 27;
+    --theme-deep: 15 17 20;
+    --theme-card: 31 35 43;
+    --theme-input: 27 31 39;
+    --theme-line: 43 47 55; /* 约等于白 10% 叠加在深色底上 */
+    --theme-text: 233 236 241;
+    --theme-sub: 154 163 178;
+  }
+  /* 浅色主题：明亮清爽，白卡片 + 细边框 */
+  html.light {
+    --brand: 37 99 235; /* #2563EB */
+    --brand-dark: 29 78 216; /* #1D4ED8 悬停 */
+    --brand-light: 37 99 235; /* 浅底下用主色保证对比度 */
+    --theme-bg: 247 249 252; /* #F7F9FC */
+    --theme-deep: 238 242 247; /* 略深于页面底，用于侧栏/输入条 */
+    --theme-card: 255 255 255; /* #FFFFFF */
+    --theme-input: 255 255 255;
+    --theme-line: 229 231 235; /* #E5E7EB */
+    --theme-text: 17 24 39; /* #111827 */
+    --theme-sub: 107 114 128; /* #6B7280 */
+  }
   html {
     @apply antialiased;
   }
@@ -56,4 +82,69 @@
 }
 .markdown-body pre code {
   @apply bg-transparent p-0 text-slate-200;
+}
+
+/* ---------- 浅色主题：深色专用工具类的等效映射 ---------- */
+/* 历史组件大量使用 bg-white/*、text-slate-* 等深色专用类，逐一改写成本高；
+   在 html.light 下统一覆盖为浅色等效值，组件代码零改动。 */
+html.light .bg-white\/5 {
+  background-color: rgb(17 24 39 / 0.04);
+}
+html.light .bg-white\/10 {
+  background-color: rgb(17 24 39 / 0.05);
+}
+html.light .bg-white\/20 {
+  background-color: rgb(17 24 39 / 0.1);
+}
+html.light .hover\:bg-white\/5:hover {
+  background-color: rgb(17 24 39 / 0.04);
+}
+html.light .hover\:bg-white\/10:hover {
+  background-color: rgb(17 24 39 / 0.06);
+}
+html.light .border-white\/5,
+html.light .border-white\/10 {
+  border-color: #e5e7eb;
+}
+html.light .border-slate-600 {
+  border-color: #d1d5db;
+}
+html.light .text-slate-200 {
+  color: #1f2937;
+}
+html.light .text-slate-300 {
+  color: #374151;
+}
+html.light .text-slate-400,
+html.light .text-slate-500 {
+  color: #6b7280;
+}
+html.light .hover\:text-white:hover,
+html.light .hover\:text-slate-200:hover {
+  color: #111827;
+}
+html.light .hover\:bg-slate-100:hover {
+  background-color: #f3f4f6;
+}
+html.light .hover\:bg-slate-200:hover {
+  background-color: #e5e7eb;
+}
+/* 滚动条与 Markdown 代码块的浅色适配 */
+html.light .scrollbar-thin::-webkit-scrollbar-thumb {
+  background-color: rgb(17 24 39 / 0.2);
+}
+html.light .scrollbar-thin::-webkit-scrollbar-thumb:hover {
+  background-color: rgb(17 24 39 / 0.3);
+}
+html.light .markdown-body code {
+  background-color: rgb(17 24 39 / 0.06);
+  color: #be123c;
+}
+html.light .markdown-body pre {
+  background-color: #f3f4f6;
+  color: #1f2937;
+}
+html.light .markdown-body pre code {
+  background-color: transparent;
+  color: #1f2937;
 }
