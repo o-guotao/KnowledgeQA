@@ -11,9 +11,9 @@ const buttonVariants = cva(
       variant: {
         default: "bg-brand text-white shadow hover:bg-brand-dark",
         destructive: "bg-red-600 text-white shadow-sm hover:bg-red-700",
-        outline: "border border-slate-300 bg-white hover:bg-slate-50 text-ink",
-        ghost: "hover:bg-slate-100 text-ink",
-        secondary: "bg-slate-100 text-ink hover:bg-slate-200",
+        outline: "border border-theme-line bg-theme-card hover:bg-theme-input text-theme-text",
+        ghost: "hover:bg-white/10 text-theme-text",
+        secondary: "bg-theme-input text-theme-text hover:bg-theme-card",
       },
       size: {
         default: "h-9 px-4 py-2",

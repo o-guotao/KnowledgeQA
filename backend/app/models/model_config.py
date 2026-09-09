@@ -5,14 +5,15 @@ from sqlalchemy import Boolean, DateTime, Float, ForeignKey, Index, Integer, Str
 from sqlalchemy.orm import Mapped, mapped_column
 
 from app.db import Base
+from app.storage_compat import UUIDType
 
 
 class ModelConfig(Base):
     __tablename__ = "model_configs"
 
-    id: Mapped[uuid.UUID] = mapped_column(primary_key=True, default=uuid.uuid4)
+    id: Mapped[uuid.UUID] = mapped_column(UUIDType(), primary_key=True, default=uuid.uuid4)
     user_id: Mapped[uuid.UUID] = mapped_column(
-        ForeignKey("users.id", ondelete="CASCADE"), nullable=False, index=True
+        UUIDType(), ForeignKey("users.id", ondelete="CASCADE"), nullable=False, index=True
     )
     name: Mapped[str] = mapped_column(String(64), nullable=False)
     base_url: Mapped[str] = mapped_column(String(512), nullable=False)
@@ -38,4 +39,5 @@ Index(
     ModelConfig.user_id,
     unique=True,
     postgresql_where=ModelConfig.is_active.is_(True),
+    sqlite_where=ModelConfig.is_active.is_(True),
 )

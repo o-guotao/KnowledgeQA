@@ -21,6 +21,7 @@ from app.db import SessionLocal
 from app.logging_config import get_trace_id, set_trace_id
 from app.models.message import Message
 from app.models.session import Session
+from app.models.usage_record import UsageRecord
 from app.models.user import User
 from app.schemas.chat import (
     ChatRequest,
@@ -31,10 +32,10 @@ from app.schemas.chat import (
     ToolCallEvent,
     UsageEvent,
 )
-from app.services import cost, injection
+from app.services import cost, injection, langfuse_tracing
 from app.services.deepseek import ModelCallError, ModelTimeoutError
 from app.services.embedding import embed_query
-from app.services.rag import build_rag_prompt, retrieve
+from app.services.rag import RAG_SYSTEM_PROMPT, build_rag_user_content, retrieve
 from app.services.model_configs import ProviderConfig, resolve_provider_config
 from app.services.openai_compatible import stream_chat
 from app.services.tools import REQUIRE_CONFIRM, TOOL_DEFINITIONS, execute_tool, parse_tool_args
@@ -123,13 +124,14 @@ async def _event_stream(
             provider: ProviderConfig = await resolve_provider_config(db, user.id)
 
         # ---- RAG 召回（按用户隔离），失败降级为空召回 ----
-        try:
-            query_vec = await embed_query(body.content)
-            async with SessionLocal() as db:
-                chunks = await retrieve(db, user.id, query_vec)
-        except Exception as exc:
-            logger.warning("retrieve degraded: %s", exc, extra={"event": "rag_degraded"})
-            chunks = []
+        with langfuse_tracing.trace_span(trace_id, "retrieve", {"query": body.content[:200]}):
+            try:
+                query_vec = await embed_query(body.content)
+                async with SessionLocal() as db:
+                    chunks = await retrieve(db, user.id, query_vec, top_k=body.top_k, query_text=body.content)
+            except Exception as exc:
+                logger.warning("retrieve degraded: %s", exc, extra={"event": "rag_degraded"})
+                chunks = []
         injection.scan_chunks([c.content for c in chunks])
 
         for c in chunks:
@@ -142,8 +144,12 @@ async def _event_stream(
                 document_name=c.document_name, snippet=c.content[:120],
             ))
 
-        # history 末尾是刚落库的当前用户消息，替换为 RAG 包装版本
-        messages = history[:-1] + [{"role": "user", "content": build_rag_prompt(body.content, chunks)}]
+        # 系统指令独立为 system 角色（约束更强）；history 末尾刚落库的用户消息替换为 RAG 数据版本
+        messages = (
+            [{"role": "system", "content": RAG_SYSTEM_PROMPT}]
+            + history[:-1]
+            + [{"role": "user", "content": build_rag_user_content(body.content, chunks)}]
+        )
 
         # ---- 模型流式调用（工具回路最多 2 轮） ----
         # 每轮 stream_chat 末尾会 yield usage（含工具调用轮）；
@@ -172,6 +178,12 @@ async def _event_stream(
                     )
                     async with SessionLocal() as db:
                         await cost.accumulate_usage(db, user.id, p, c)
+                        # 管理后台用量/成本明细：每次调用落一行（含 model 维度）
+                        db.add(UsageRecord(
+                            user_id=user.id, session_id=body.session_id,
+                            model=provider.model_name, prompt_tokens=p,
+                            completion_tokens=c, cost_cny=cost_cny_round, trace_id=trace_id,
+                        ))
                         await db.commit()
                     yield _sse(UsageEvent(
                         trace_id=trace_id, prompt_tokens=p,
@@ -238,6 +250,13 @@ async def _event_stream(
             citations=citations,
             usage={**(usage or {}), "cost_cny": cost_cny} if usage else None,
         )
+        # Langfuse 记录完整生成（输出 + token usage），供成本与质量分析
+        langfuse_tracing.trace_generation(
+            trace_id, "chat_completion", provider.model_name, messages,
+            "".join(content_parts), usage,
+            metadata={"session_id": str(body.session_id), "citations": len(citations)},
+        )
+        langfuse_tracing.flush()
         yield _sse(DoneEvent(trace_id=trace_id, message_id=assistant_id))
 
     except _ClientGone:

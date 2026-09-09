@@ -1,0 +1,29 @@
+{
+  "id": "doc-batch-upload-validation-preview",
+  "name": "doc-batch-upload-validation-preview",
+  "title": "文档批量上传、上传校验与预览",
+  "description": "为文档模块增加：多文件批量上传、上传前/上传时校验（重复文件、文件名规范化、图片型 PDF 快速失败）、以及文档预览（文本预览 + 图片型 PDF 逐页渲染）",
+  "status": "planning",
+  "dev_type": null,
+  "scope": null,
+  "package": null,
+  "priority": "P2",
+  "creator": "guotao",
+  "assignee": "guotao",
+  "createdAt": "2026-09-07",
+  "completedAt": null,
+  "branch": null,
+  "base_branch": "main",
+  "worktree_path": null,
+  "commit": null,
+  "pr_url": null,
+  "subtasks": [],
+  "children": [
+    "09-07-batch-upload-validation",
+    "09-07-document-preview"
+  ],
+  "parent": null,
+  "relatedFiles": [],
+  "notes": "",
+  "meta": {}
+}

@@ -1,4 +1,4 @@
-import { BookOpenText, Files, LogOut, Menu, MessageSquare, Settings2, X } from "lucide-react";
+import { BookOpenText, Files, LayoutDashboard, LogOut, Menu, MessageSquare, Quote, Settings2, ShieldCheck, X, Zap } from "lucide-react";
 import { useCallback, useEffect, useRef, useState } from "react";
 import { z } from "zod";
 import { useLocation, useNavigate } from "react-router-dom";
@@ -35,8 +35,13 @@ export function ChatPage() {
   const [toolCall, setToolCall] = useState<PendingToolCall | null>(null);
   const [quotaRefreshKey, setQuotaRefreshKey] = useState(0);
   const [quotaExhausted, setQuotaExhausted] = useState(false);
+  // 检索片段数 top_k：与后端 rag_top_k 默认一致，可在侧栏「知识库设置」手动调整
+  const [topK, setTopK] = useState(5);
   const [sidebarOpen, setSidebarOpen] = useState(false);
-  const lastQuestionRef = useRef<string>("");
+  // 正在本地流式作答的会话 id：activeId 切换会触发历史加载，需据此跳过以免清掉乐观消息
+  const turnSessionRef = useRef<string | null>(null);
+  // 该在途会话的乐观消息当前是否正显示在列表中（中途切走再切回时已非乐观列表，须走真实历史加载）
+  const turnVisibleRef = useRef(false);
   const bottomRef = useRef<HTMLDivElement>(null);
   const { streaming, send, stop } = useChatStream();
 
@@ -56,28 +61,60 @@ export function ChatPage() {
       setMessages([]);
       return;
     }
+    // 刚新建会话并首次提问：assistant 尚未落库（服务端先以 streaming 态写入），
+    // 此时用服务端历史覆盖乐观列表会把占位条清掉/过滤掉，导致首轮回答不显示。
+    // 仅当该会话的乐观列表正显示在屏上时以它为准跳过；中途切走再切回则走真实历史。
+    if (turnSessionRef.current === activeId && turnVisibleRef.current) return;
+    turnVisibleRef.current = false; // 将用服务端历史替换当前列表
+    let cancelled = false;
     get(`/sessions/${activeId}/messages`, z.array(MessageSchema))
-      .then((rows) =>
+      .then((rows) => {
+        if (cancelled) return;
         setMessages(
           rows
             .filter((m) => m.status !== "streaming")
             .map((m) => ({
               id: m.id,
+              serverId: m.id,
               role: m.role,
               content: m.content,
               status: m.status,
               citations: (m.citations ?? undefined) as DisplayMessage["citations"],
               error: m.error,
               traceId: m.trace_id,
+              feedback: m.feedback ?? null,
             })),
-        ),
-      )
-      .catch((err) => console.error("messages fetch failed", err));
+        );
+      })
+      .catch((err) => {
+        if (!cancelled) console.error("messages fetch failed", err);
+      });
+    return () => {
+      cancelled = true;
+    };
   }, [activeId]);
 
   useEffect(() => {
     bottomRef.current?.scrollIntoView({ behavior: "smooth" });
   }, [messages]);
+
+  // 答案反馈：调后端并更新本地消息的 feedback 态（再点同值=取消）
+  const handleFeedback = useCallback(
+    async (messageId: string, feedback: "up" | "down" | null) => {
+      try {
+        await post(`/messages/${messageId}/feedback`, { feedback }, z.object({
+          message_id: z.string(),
+          feedback: z.enum(["up", "down"]).nullable(),
+        }));
+        setMessages((prev) =>
+          prev.map((m) => (m.serverId === messageId ? { ...m, feedback } : m)),
+        );
+      } catch (err) {
+        console.error("feedback failed", err);
+      }
+    },
+    [],
+  );
 
   const createSession = useCallback(async () => {
     const session = await post("/sessions", { title: "新会话" }, SessionSchema);
@@ -160,25 +197,31 @@ export function ChatPage() {
       if (!sessionId) {
         const session = await post("/sessions", { title: "新会话" }, SessionSchema);
         setSessions((prev) => [session, ...prev]);
-        setActiveId(session.id);
         sessionId = session.id;
       }
-      lastQuestionRef.current = content;
+      // 先登记在途会话，再切 activeId/追加乐观消息：历史加载 effect 据此跳过，不覆盖本轮
+      turnSessionRef.current = sessionId;
+      if (!activeId) setActiveId(sessionId);
       const assistantLocalId = nextLocalId();
       setMessages((prev) => [
         ...prev,
         { id: nextLocalId(), role: "user", content },
         { id: assistantLocalId, role: "assistant", content: "", status: "local_streaming" },
       ]);
-      await send(sessionId, content, {
-        onEvent: (event) => handleEvent(assistantLocalId, event),
-        onError: (message) =>
-          setMessages((prev) =>
-            prev.map((m) =>
-              m.id === assistantLocalId ? { ...m, status: "failed", error: message } : m,
+      turnVisibleRef.current = true;
+      try {
+        await send(sessionId, content, {
+          onEvent: (event) => handleEvent(assistantLocalId, event),
+          onError: (message) =>
+            setMessages((prev) =>
+              prev.map((m) =>
+                m.id === assistantLocalId ? { ...m, status: "failed", error: message } : m,
+              ),
             ),
-          ),
-      });
+        }, topK);
+      } finally {
+        if (turnSessionRef.current === sessionId) turnSessionRef.current = null;
+      }
       // abort 路径：仍处本地流式态则标记已停止
       setMessages((prev) =>
         prev.map((m) =>
@@ -188,7 +231,7 @@ export function ChatPage() {
         ),
       );
     },
-    [activeId, send, handleEvent],
+    [activeId, send, handleEvent, topK],
   );
 
   const onToolResolved = useCallback(
@@ -205,9 +248,9 @@ export function ChatPage() {
   );
 
   return (
-    <div className="flex h-dvh overflow-hidden bg-slate-50">
+    <div className="flex h-dvh overflow-hidden bg-theme-deep">
       {sidebarOpen && <button type="button" aria-label="关闭导航" onClick={() => setSidebarOpen(false)} className="fixed inset-0 z-20 bg-slate-950/40 lg:hidden" />}
-      <aside className={`fixed inset-y-0 left-0 z-30 flex w-80 -translate-x-full flex-col gap-5 overflow-y-auto border-r border-white/10 bg-ink p-4 shadow-2xl transition-transform lg:static lg:w-72 lg:translate-x-0 lg:shadow-none ${sidebarOpen ? "translate-x-0" : ""}`}>
+      <aside className={`fixed inset-y-0 left-0 z-30 flex w-80 -translate-x-full flex-col gap-5 overflow-y-auto border-r border-white/5 bg-gradient-to-b from-theme-deep via-theme-deep to-theme-bg p-4 shadow-2xl transition-transform lg:static lg:w-72 lg:translate-x-0 lg:shadow-none ${sidebarOpen ? "translate-x-0" : ""}`}>
         <div className="flex items-center justify-between px-1 text-white"><div className="flex items-center gap-2 text-lg font-semibold"><BookOpenText size={21} className="text-brand-light" />内知</div><button type="button" className="rounded-md p-1 text-slate-400 hover:bg-white/10 lg:hidden" aria-label="关闭导航" onClick={() => setSidebarOpen(false)}><X size={18} /></button></div>
         <p className="-mt-3 px-1 text-xs text-slate-500">KnowledgeQA · 内部知识助手</p>
         <nav className="flex flex-col gap-1 border-b border-white/10 pb-3" aria-label="主导航">
@@ -215,6 +258,7 @@ export function ChatPage() {
             { label: "对话", to: "/", icon: MessageSquare },
             { label: "文档库", to: "/documents", icon: Files },
             { label: "模型设置", to: "/settings/models", icon: Settings2 },
+            ...(user?.role === "admin" ? [{ label: "管理后台", to: "/admin", icon: LayoutDashboard }] : []),
           ].map(({ label, to, icon: Icon }) => {
             const active = location.pathname === to;
             return (
@@ -234,6 +278,24 @@ export function ChatPage() {
             );
           })}
         </nav>
+        <div className="border-b border-white/5 pb-3">
+          <p className="px-1 text-xs font-medium text-slate-400">知识库设置</p>
+          <div className="mt-2.5 px-1">
+            <div className="flex items-center justify-between text-xs text-slate-500">
+              <span>检索片段数 top_k</span>
+              <span className="font-mono text-brand-light">{topK}</span>
+            </div>
+            <input
+              type="range"
+              min={1}
+              max={20}
+              value={topK}
+              onChange={(e) => setTopK(Number(e.target.value))}
+              className="mt-1.5 w-full accent-brand"
+              aria-label="检索片段数 top_k"
+            />
+          </div>
+        </div>
         <SessionList
           sessions={sessions}
           activeId={activeId}
@@ -241,7 +303,7 @@ export function ChatPage() {
           onCreate={() => void createSession()}
           onDelete={(id) => void deleteSession(id)}
         />
-        <div className="mt-auto flex items-center justify-between border-t border-white/10 px-1 pt-3">
+        <div className="mt-auto flex items-center justify-between border-t border-white/5 px-1 pt-3">
           <div className="text-xs text-slate-400">
             {user?.display_name || user?.username}
             <div className="mt-1">
@@ -260,26 +322,57 @@ export function ChatPage() {
       </aside>
 
       {/* 对话主区 */}
-      <main className="flex min-w-0 flex-1 flex-col bg-slate-50">
-        <header className="flex h-16 shrink-0 items-center justify-between border-b border-slate-200/80 bg-white/80 px-4 backdrop-blur-xl sm:px-6">
-          <div className="flex items-center gap-3"><button type="button" aria-label="打开导航" onClick={() => setSidebarOpen(true)} className="rounded-lg p-2 text-slate-600 hover:bg-slate-100 lg:hidden"><Menu size={20} /></button><div><p className="text-sm font-semibold text-ink">知识问答</p><p className="hidden text-xs text-slate-400 sm:block">基于已入库文档生成带引用的回答</p></div></div>
-          <span className="rounded-full bg-emerald-50 px-2.5 py-1 text-xs font-medium text-emerald-700">服务就绪</span>
+      <main className="flex min-w-0 flex-1 flex-col bg-gradient-to-b from-theme-bg via-theme-bg to-theme-deep">
+        <header className="flex h-16 shrink-0 items-center justify-between border-b border-theme-line bg-theme-bg/70 px-4 backdrop-blur-xl sm:px-6">
+          <div className="flex items-center gap-3"><button type="button" aria-label="打开导航" onClick={() => setSidebarOpen(true)} className="rounded-lg p-2 text-slate-300 hover:bg-white/10 lg:hidden"><Menu size={20} /></button><div><p className="text-sm font-semibold tracking-tight text-slate-100">知识问答</p><p className="hidden text-xs text-slate-500 sm:block">基于已入库文档生成带引用的回答</p></div></div>
+          <span className="flex items-center gap-1.5 rounded-full border border-emerald-500/30 bg-emerald-500/10 px-2.5 py-1 text-xs font-medium text-emerald-400"><span className="h-1.5 w-1.5 rounded-full bg-emerald-400" />服务就绪</span>
         </header>
         <div className="flex-1 overflow-y-auto scrollbar-thin px-4 py-6 sm:px-6">
           <div className="mx-auto max-w-3xl space-y-6">
             {messages.length === 0 && (
-              <div className="mt-16 rounded-2xl border border-dashed border-slate-300 bg-white px-6 py-12 text-center text-sm text-slate-400 shadow-sm sm:mt-24">
-                <p className="text-xl font-semibold text-ink">从知识库中找到可靠答案</p>
-                <p className="mx-auto mt-2 max-w-md leading-6">上传制度、手册或 FAQ 后直接提问。每条回答都会标出可回溯的原文引用。</p>
+              <div className="mt-16 flex flex-col items-center px-6 sm:mt-24">
+                <div className="flex h-14 w-14 items-center justify-center rounded-2xl bg-gradient-to-br from-brand to-brand-dark text-white shadow-pop">
+                  <BookOpenText size={26} />
+                </div>
+                <p className="mt-6 text-2xl font-semibold tracking-tight text-theme-text">从知识库中找到可靠答案</p>
+                <p className="mx-auto mt-3 max-w-md text-center text-sm leading-6 text-theme-sub">上传制度、手册或 FAQ 后直接提问。每条回答都会标出可回溯的原文引用。</p>
+                <div className="mt-10 grid w-full max-w-2xl gap-3 sm:grid-cols-3">
+                  {[
+                    { icon: Quote, title: "引用可溯", desc: "答案点回原文出处" },
+                    { icon: Zap, title: "流式输出", desc: "逐字生成、可随时停止" },
+                    { icon: ShieldCheck, title: "安全留痕", desc: "用量配额、操作可审计" },
+                  ].map((f) => (
+                    <div key={f.title} className="rounded-xl border border-theme-line bg-theme-card p-4 text-left shadow-soft">
+                      <span className="flex h-8 w-8 items-center justify-center rounded-lg bg-brand/15 text-brand-light">
+                        <f.icon size={15} />
+                      </span>
+                      <p className="mt-3 text-sm font-medium text-theme-text">{f.title}</p>
+                      <p className="mt-1 text-xs leading-5 text-theme-sub">{f.desc}</p>
+                    </div>
+                  ))}
+                </div>
               </div>
             )}
-            {messages.map((m) => (
+            {messages.map((m, idx) => (
               <MessageItem
                 key={m.id}
                 message={m}
                 streaming={m.status === "local_streaming"}
                 onCitationClick={setActiveCitation}
-                onRetry={m.status === "failed" ? () => void ask(lastQuestionRef.current) : undefined}
+                onRetry={
+                  m.status === "failed"
+                    ? () => {
+                        // 用该失败回复之前最近的用户提问重试：lastQuestionRef 在页面刷新后丢失，
+                        // 会以空 content 触发 422；且多轮失败时无法对应各自提问。
+                        const question = messages
+                          .slice(0, idx)
+                          .reverse()
+                          .find((x) => x.role === "user")?.content;
+                        if (question) void ask(question);
+                      }
+                    : undefined
+                }
+                onFeedback={handleFeedback}
               />
             ))}
             <div ref={bottomRef} />

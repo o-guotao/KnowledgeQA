@@ -31,6 +31,22 @@ def compute_cost_cny(
     return round(cost, 6)
 
 
+def _log_usage(user_id: uuid.UUID, prompt_tokens: int, completion_tokens: int, quota: Quota) -> None:
+    logger.info(
+        "usage accumulated",
+        extra={
+            "event": "usage",
+            "user_id": str(user_id),
+            "extra": {
+                "prompt_tokens": prompt_tokens,
+                "completion_tokens": completion_tokens,
+                "period_total": quota.prompt_tokens + quota.completion_tokens,
+                "cost_cny": quota.cost_cny,
+            },
+        },
+    )
+
+
 async def ensure_quota_row(db: AsyncSession, user_id: uuid.UUID) -> None:
     """幂等创建当月配额行（不存在则插入，limit 取配置默认值）。"""
     settings = get_settings()
@@ -40,24 +56,34 @@ async def ensure_quota_row(db: AsyncSession, user_id: uuid.UUID) -> None:
             select(Quota).where(Quota.user_id == user_id, Quota.period == period)
         )
     ).scalar_one_or_none()
-    if existing is None:
-        # INSERT ... ON CONFLICT DO NOTHING：并发首请求时只有一行胜出
-        await db.execute(
-            text(
-                """
-                INSERT INTO quotas (id, user_id, period, limit_tokens)
-                VALUES (:id, :uid, :period, :lim)
-                ON CONFLICT (user_id, period) DO NOTHING
-                """
-            ),
-            {
-                "id": str(uuid.uuid4()),
-                "uid": str(user_id),
-                "period": period,
-                "lim": settings.quota_monthly_tokens,
-            },
-        )
-        await db.flush()
+    if existing is not None:
+        return
+    if settings.db_backend == "sqlite":
+        # sqlite：ORM add + 唯一约束冲突回退（单进程低并发可接受）
+        quota = Quota(user_id=user_id, period=period, limit_tokens=settings.quota_monthly_tokens)
+        db.add(quota)
+        try:
+            await db.flush()
+        except Exception:
+            await db.rollback()
+        return
+    # INSERT ... ON CONFLICT DO NOTHING：并发首请求时只有一行胜出
+    await db.execute(
+        text(
+            """
+            INSERT INTO quotas (id, user_id, period, limit_tokens)
+            VALUES (:id, :uid, :period, :lim)
+            ON CONFLICT (user_id, period) DO NOTHING
+            """
+        ),
+        {
+            "id": str(uuid.uuid4()),
+            "uid": str(user_id),
+            "period": period,
+            "lim": settings.quota_monthly_tokens,
+        },
+    )
+    await db.flush()
 
 
 async def try_consume_quota(
@@ -66,11 +92,29 @@ async def try_consume_quota(
     """原子地占用配额：单条 UPDATE 同时做"检查未超限 + 累加"。
 
     返回 (ok, quota)：ok=False 表示已达上限拒绝占用；ok=True 时 quota 为更新后的行。
-    保证并发安全——多请求同时调用，只有未超限的能 UPDATE 到行。
+    postgresql 用原子 UPDATE RETURNING；sqlite 退化为读-判-写（低并发演示）。
     """
     settings = get_settings()
     await ensure_quota_row(db, user_id)
+    period = current_period()
     cost_cny = compute_cost_cny(prompt_tokens, completion_tokens)
+
+    if settings.db_backend == "sqlite":
+        quota = (
+            await db.execute(
+                select(Quota).where(Quota.user_id == user_id, Quota.period == period)
+            )
+        ).scalar_one()
+        limit = quota.limit_tokens or settings.quota_monthly_tokens
+        if quota.prompt_tokens + quota.completion_tokens + prompt_tokens + completion_tokens > limit:
+            return False, None
+        quota.prompt_tokens += prompt_tokens
+        quota.completion_tokens += completion_tokens
+        quota.cost_cny = round(quota.cost_cny + cost_cny, 6)
+        await db.flush()
+        _log_usage(user_id, prompt_tokens, completion_tokens, quota)
+        return True, quota
+
     result = await db.execute(
         text(
             """
@@ -87,7 +131,7 @@ async def try_consume_quota(
         ),
         {
             "uid": str(user_id),
-            "period": current_period(),
+            "period": period,
             "p": prompt_tokens,
             "c": completion_tokens,
             "cost": cost_cny,
@@ -98,7 +142,7 @@ async def try_consume_quota(
         return False, None
     quota = (
         await db.execute(
-            select(Quota).where(Quota.user_id == user_id, Quota.period == current_period())
+            select(Quota).where(Quota.user_id == user_id, Quota.period == period)
         )
     ).scalar_one()
     logger.info(

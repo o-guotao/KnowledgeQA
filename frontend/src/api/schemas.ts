@@ -67,6 +67,7 @@ export const MessageSchema = z.object({
   tool_call: z.record(z.unknown()).nullable(),
   usage: z.record(z.unknown()).nullable(),
   error: z.string().nullable(),
+  feedback: z.enum(["up", "down"]).nullable().optional(),
   created_at: z.string(),
 });
 export type Message = z.infer<typeof MessageSchema>;
@@ -75,7 +76,10 @@ export type Message = z.infer<typeof MessageSchema>;
 export const DocumentSchema = z.object({
   id: z.string().uuid(),
   filename: z.string(),
-  status: z.enum(["uploaded", "processing", "ready", "failed"]),
+  content_hash: z.string().nullable(),
+  folder: z.string().default(""),
+  tags: z.array(z.string()).default([]),
+  status: z.enum(["uploaded", "processing", "ready", "failed", "no_text"]),
   chunk_size: z.number(),
   chunk_overlap: z.number(),
   chunk_count: z.number(),
@@ -84,6 +88,15 @@ export const DocumentSchema = z.object({
   updated_at: z.string(),
 });
 export type KnowledgeDocument = z.infer<typeof DocumentSchema>;
+
+export const FeedbackStatsSchema = z.object({
+  total_answered: z.number(),
+  up_count: z.number(),
+  down_count: z.number(),
+  feedback_total: z.number(),
+  down_rate: z.number(),
+});
+export type FeedbackStats = z.infer<typeof FeedbackStatsSchema>;
 
 export const ChunkSchema = z.object({
   id: z.string().uuid(),
@@ -109,6 +122,51 @@ export const QuotaSchema = z.object({
   exhausted: z.boolean(),
 });
 export type Quota = z.infer<typeof QuotaSchema>;
+
+// ---------- 管理后台 ----------
+export const AdminUserMonthSchema = z.object({
+  prompt_tokens: z.number(),
+  completion_tokens: z.number(),
+  total_tokens: z.number(),
+  cost_cny: z.number(),
+  limit_tokens: z.number(),
+});
+export const AdminUserSchema = z.object({
+  id: z.string().uuid(),
+  username: z.string(),
+  display_name: z.string(),
+  role: z.string(),
+  created_at: z.string(),
+  month: AdminUserMonthSchema,
+});
+export type AdminUser = z.infer<typeof AdminUserSchema>;
+
+export const DailyUsageSchema = z.object({
+  date: z.string(),
+  calls: z.number(),
+  prompt_tokens: z.number(),
+  completion_tokens: z.number(),
+  total_tokens: z.number(),
+  cost_cny: z.number(),
+});
+export type DailyUsage = z.infer<typeof DailyUsageSchema>;
+
+export const UserUsageSchema = z.object({
+  user_id: z.string().uuid(),
+  username: z.string(),
+  calls: z.number(),
+  total_tokens: z.number(),
+  cost_cny: z.number(),
+});
+export type UserUsage = z.infer<typeof UserUsageSchema>;
+
+export const ModelUsageSchema = z.object({
+  model: z.string(),
+  calls: z.number(),
+  total_tokens: z.number(),
+  cost_cny: z.number(),
+});
+export type ModelUsage = z.infer<typeof ModelUsageSchema>;
 
 // ---------- SSE 事件：可辨识联合（type 字段） ----------
 const TraceId = { trace_id: z.string() } as const;

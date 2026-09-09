@@ -50,3 +50,10 @@ async def get_current_user(
     if user is None:
         raise AppError("UNAUTHORIZED", "用户不存在", 401)
     return user
+
+
+async def require_admin(user: User = Depends(get_current_user)) -> User:
+    """管理后台端点鉴权：仅 role=admin 放行，否则 403。"""
+    if user.role != "admin":
+        raise AppError("FORBIDDEN", "需要管理员权限", 403)
+    return user

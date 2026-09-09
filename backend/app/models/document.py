@@ -1,21 +1,38 @@
 import uuid
 from datetime import datetime
 
-from sqlalchemy import DateTime, ForeignKey, Integer, String, Text, func
+from sqlalchemy import JSON, DateTime, ForeignKey, Index, Integer, String, Text, func, text
 from sqlalchemy.orm import Mapped, mapped_column
 
 from app.db import Base
+from app.storage_compat import UUIDType
 
 # uploaded -> processing -> ready / failed
-DOCUMENT_STATUSES = ("uploaded", "processing", "ready", "failed")
+# no_text：上传时即判定为纯图片 PDF（无文字层），保留原文件但不投递切分任务，供预览/将来 OCR
+DOCUMENT_STATUSES = ("uploaded", "processing", "ready", "failed", "no_text")
 
 
 class Document(Base):
     __tablename__ = "documents"
+    # 用户级内容判重的部分唯一索引（NULL 行不参与）。sqlite/pg 双方言 where 兼容。
+    __table_args__ = (
+        Index(
+            "ix_documents_user_content_hash",
+            "user_id",
+            "content_hash",
+            unique=True,
+            postgresql_where=text("content_hash IS NOT NULL"),
+            sqlite_where=text("content_hash IS NOT NULL"),
+        ),
+    )
 
-    id: Mapped[uuid.UUID] = mapped_column(primary_key=True, default=uuid.uuid4)
-    user_id: Mapped[uuid.UUID] = mapped_column(ForeignKey("users.id", ondelete="CASCADE"), index=True)
+    id: Mapped[uuid.UUID] = mapped_column(UUIDType(), primary_key=True, default=uuid.uuid4)
+    user_id: Mapped[uuid.UUID] = mapped_column(UUIDType(), ForeignKey("users.id", ondelete="CASCADE"), index=True)
     filename: Mapped[str] = mapped_column(String(256))
+    content_hash: Mapped[str | None] = mapped_column(String(64), nullable=True)
+    # 文档组织：文件夹（单层路径如 "制度/人事"）与标签（JSON 字符串数组）
+    folder: Mapped[str] = mapped_column(String(128), default="", index=True)
+    tags: Mapped[list] = mapped_column(JSON, default=list)
     object_key: Mapped[str] = mapped_column(String(512))
     status: Mapped[str] = mapped_column(String(16), default="uploaded", index=True)
     chunk_size: Mapped[int] = mapped_column(Integer, default=512)

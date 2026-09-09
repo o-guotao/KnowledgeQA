@@ -18,6 +18,21 @@ export default {
         ink: "#0F172A",
         muted: "#475569",
         surface: "#F8FAFC",
+        // 钢蓝灰主题（仿目标截图的中明度蓝灰）
+        theme: {
+          bg: "#14161b",
+          deep: "#0f1114",
+          card: "#1f232b",
+          input: "#1b1f27",
+          line: "rgba(255,255,255,0.10)",
+          text: "#e9ecf1",
+          sub: "#9aa3b2",
+        },
+      },
+      boxShadow: {
+        soft: "0 1px 2px rgba(15,23,42,0.04), 0 1px 3px rgba(15,23,42,0.05)",
+        card: "0 1px 3px rgba(15,23,42,0.05), 0 6px 16px rgba(15,23,42,0.05)",
+        pop: "0 6px 28px rgba(15,23,42,0.12)",
       },
       keyframes: {
         "fade-up": {

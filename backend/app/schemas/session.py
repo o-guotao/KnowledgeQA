@@ -32,6 +32,7 @@ class MessageOut(BaseModel):
     tool_call: dict | None
     usage: dict | None
     error: str | None
+    feedback: str | None = None
     created_at: datetime
 
     model_config = {"from_attributes": True}

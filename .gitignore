@@ -12,6 +12,8 @@ node_modules/
 dist/
 *.local
 
+
+
 # Models & data
 .models/
 *.log
@@ -30,3 +32,6 @@ frontend/openapi.json
 
 
 error.txt
+# Local dev database
+*.db
+*.sqlite

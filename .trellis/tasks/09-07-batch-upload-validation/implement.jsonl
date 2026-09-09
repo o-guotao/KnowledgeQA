@@ -1,0 +1,3 @@
+{"file": ".trellis/tasks/09-07-doc-batch-upload-validation-preview/design.md", "reason": "父任务契约：no_text/错误码/文件名规则/content_hash 双方须遵守"}
+{"file": ".trellis/tasks/09-07-batch-upload-validation/design.md", "reason": "本任务实现依据：后端校验+哈希判重+no_text+前端批量设计"}
+{"file": ".trellis/spec/guides/cross-layer-thinking-guide.md", "reason": "状态/哈希横跨 DB-API-前端，先想层间边界"}
