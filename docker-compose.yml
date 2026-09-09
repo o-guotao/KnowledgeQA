@@ -6,8 +6,9 @@ services:
       POSTGRES_USER: ${POSTGRES_USER:-webagent}
       POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-webagent_secret}
       POSTGRES_DB: ${POSTGRES_DB:-webagent}
-    ports:
-      - "5432:5432"
+    # 4GB 内存调优：压低缓存；不映射 5432 到主机（仅容器内网访问，更安全）
+    command: postgres -c shared_buffers=128MB -c work_mem=16MB -c max_connections=50 -c effective_cache_size=1GB
+    mem_limit: 512m
     volumes:
       - pgdata:/var/lib/postgresql/data
     healthcheck:
@@ -23,9 +24,8 @@ services:
     environment:
       MINIO_ROOT_USER: ${MINIO_ROOT_USER:-minioadmin}
       MINIO_ROOT_PASSWORD: ${MINIO_ROOT_PASSWORD:-minioadmin123}
-    ports:
-      - "9000:9000"
-      - "9001:9001"
+    # 不映射 9000/9001 到主机（仅容器内网访问；console 需要时用 SSH 隧道）
+    mem_limit: 384m
     volumes:
       - miniodata:/data
     healthcheck:
@@ -68,6 +68,9 @@ services:
       MODEL_CONFIG_ENCRYPTION_KEY: ${MODEL_CONFIG_ENCRYPTION_KEY:-}
       ENVIRONMENT: ${ENVIRONMENT:-production}
       DEPLOY_PROFILE: ${DEPLOY_PROFILE:-production}
+      # 限制 ONNX/fastembed 线程，避免多线程吃满 CPU/内存（4GB 机器）
+      OMP_NUM_THREADS: ${OMP_NUM_THREADS:-2}
+    mem_limit: 768m
     ports:
       - "8000:8000"
     volumes:
@@ -98,6 +101,9 @@ services:
       MODEL_CONFIG_ENCRYPTION_KEY: ${MODEL_CONFIG_ENCRYPTION_KEY:-}
       ENVIRONMENT: ${ENVIRONMENT:-production}
       DEPLOY_PROFILE: ${DEPLOY_PROFILE:-production}
+      OMP_NUM_THREADS: ${OMP_NUM_THREADS:-2}
+    # worker 加载 BGE 模型 + 推理是内存大头；限制防拖垮整机
+    mem_limit: 1536m
     volumes:
       - modelcache:/data/models
     depends_on:
@@ -108,6 +114,7 @@ services:
     build: ./frontend
     image: knowledgeqa-frontend:${IMAGE_TAG:-current}
     container_name: web-agent-frontend
+    mem_limit: 128m
     ports:
       - "5173:80"
     depends_on:
@@ -134,6 +141,23 @@ services:
       backend:
         condition: service_healthy
       frontend:
+        condition: service_healthy
+
+  # 方案 A 回源反代（EdgeOne Pages 前端 + CVM 后端）：仅反代 /api，不服务前端静态。
+  # 用 --profile edgeone 启动；配置由 deploy/nginx/setup-https-edgeone.sh 渲染生成。
+  nginx-edgeone:
+    image: nginx:1.27-alpine
+    container_name: web-agent-nginx-edgeone
+    profiles: ["edgeone"]
+    ports:
+      - "80:80"
+      - "443:443"
+    volumes:
+      - ./deploy/nginx/nginx.edgeone.rendered.conf:/etc/nginx/conf.d/default.conf:ro
+      - ./deploy/nginx/certbot/conf:/etc/letsencrypt:ro
+      - ./deploy/nginx/certbot/www:/var/www/certbot:ro
+    depends_on:
+      backend:
         condition: service_healthy
 
 volumes:
