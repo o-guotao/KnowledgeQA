@@ -5,7 +5,7 @@
  */
 import { useCallback, useRef, useState } from "react";
 
-import { getToken } from "../api/client";
+import { API_BASE, getToken } from "../api/client";
 import { parseChatEvent, type ChatEvent } from "../api/schemas";
 
 export interface StreamHandlers {
@@ -33,7 +33,7 @@ export function useChatStream(): ChatStream {
       abortRef.current = controller;
       setStreaming(true);
       try {
-        const response = await fetch("/api/chat/stream", {
+        const response = await fetch(`${API_BASE}/api/chat/stream`, {
           method: "POST",
           headers: {
             "Content-Type": "application/json",

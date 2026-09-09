@@ -8,6 +8,12 @@ import { ApiErrorSchema } from "./schemas";
 
 const TOKEN_KEY = "web-agent-token";
 
+/**
+ * 后端 API 基地址。默认空串 = 相对路径（与前端同源，由 EdgeOne Pages / 网关把 /api 反代到后端源站，免 CORS）；
+ * 前端部署在独立域名、直连后端时设为后端完整地址（如 https://api.example.com），此时后端 CORS 需放行前端域名。
+ */
+export const API_BASE: string = import.meta.env.VITE_API_BASE_URL ?? "";
+
 export function getToken(): string | null {
   return localStorage.getItem(TOKEN_KEY);
 }
@@ -40,7 +46,7 @@ async function request<T>(
     headers.set("Content-Type", "application/json");
   }
 
-  const response = await fetch(`/api${path}`, { ...init, headers });
+  const response = await fetch(`${API_BASE}/api${path}`, { ...init, headers });
   if (!response.ok) {
     let code = "HTTP_" + response.status;
     let message = `请求失败（${response.status}）`;
@@ -104,7 +110,7 @@ export async function getFileBytes(documentId: string): Promise<ArrayBuffer> {
   const headers = new Headers();
   const token = getToken();
   if (token) headers.set("Authorization", `Bearer ${token}`);
-  const response = await fetch(`/api/documents/${documentId}/file`, { headers });
+  const response = await fetch(`${API_BASE}/api/documents/${documentId}/file`, { headers });
   if (!response.ok) {
     // 与 request() 一致：尽量透出后端 detail.message（如 404「文档不存在」），否则回退通用文案
     let code = "HTTP_" + response.status;
