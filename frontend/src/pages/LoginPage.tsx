@@ -45,15 +45,8 @@ export function LoginPage() {
     <div className="flex min-h-screen bg-theme-deep text-theme-text">
       {/* 左半品牌区：沉稳深墨底 + 网格纹理 + 品牌光晕点缀（克制配色） */}
       <div className="relative hidden flex-1 flex-col justify-between overflow-hidden p-12 lg:flex">
-        <div className="pointer-events-none absolute inset-0 bg-gradient-to-br from-slate-950 via-[#101826] to-theme-deep" />
-        <div
-          className="pointer-events-none absolute inset-0 opacity-[0.15]"
-          style={{
-            backgroundImage:
-              "linear-gradient(rgba(255,255,255,0.06) 1px, transparent 1px), linear-gradient(90deg, rgba(255,255,255,0.06) 1px, transparent 1px)",
-            backgroundSize: "44px 44px",
-          }}
-        />
+        <div className="pointer-events-none absolute inset-0 bg-gradient-to-br from-theme-deep via-theme-bg to-theme-deep" />
+        <div className="login-grid pointer-events-none absolute inset-0 opacity-[0.15]" />
         <div className="pointer-events-none absolute -left-32 -top-32 h-96 w-96 rounded-full bg-brand/20 blur-3xl" />
         <div className="pointer-events-none absolute bottom-0 right-0 h-80 w-80 rounded-full bg-brand/10 blur-3xl" />
 

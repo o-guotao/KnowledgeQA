@@ -148,3 +148,16 @@ html.light .markdown-body pre code {
   background-color: transparent;
   color: #1f2937;
 }
+
+/* 登录页品牌区网格纹理：深色用白线，浅色用墨线 */
+.login-grid {
+  background-image:
+    linear-gradient(rgb(255 255 255 / 0.06) 1px, transparent 1px),
+    linear-gradient(90deg, rgb(255 255 255 / 0.06) 1px, transparent 1px);
+  background-size: 44px 44px;
+}
+html.light .login-grid {
+  background-image:
+    linear-gradient(rgb(17 24 39 / 0.05) 1px, transparent 1px),
+    linear-gradient(90deg, rgb(17 24 39 / 0.05) 1px, transparent 1px);
+}
