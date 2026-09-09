@@ -51,7 +51,11 @@ function filenameError(name: string): string | null {
   return null;
 }
 
-async function sha256Hex(buf: ArrayBuffer): Promise<string> {
+/** 计算文件 SHA-256 用于前端预检判重。
+ * crypto.subtle 仅在安全上下文（HTTPS / localhost）可用；纯 IP HTTP 访问时为 undefined，
+ * 此时返回 null 跳过前端判重，由后端权威 content_hash 判重兜底（重复时后端返回 409）。 */
+async function sha256Hex(buf: ArrayBuffer): Promise<string | null> {
+  if (typeof crypto === "undefined" || !crypto.subtle) return null;
   const digest = await crypto.subtle.digest("SHA-256", buf);
   return Array.from(new Uint8Array(digest))
     .map((b) => b.toString(16).padStart(2, "0"))
@@ -121,9 +125,11 @@ export function DocumentsPage() {
       let hash: string | null = null;
       if (problems.length === 0) {
         hash = await sha256Hex(await file.arrayBuffer());
-        const dupName = existingByHash.get(hash) ?? selectionHashes.get(hash);
-        if (dupName) problems.push(`内容已存在：${dupName}`);
-        else selectionHashes.set(hash, file.name);
+        if (hash) {
+          const dupName = existingByHash.get(hash) ?? selectionHashes.get(hash);
+          if (dupName) problems.push(`内容已存在：${dupName}`);
+          else selectionHashes.set(hash, file.name);
+        }
       }
 
       items.push(
