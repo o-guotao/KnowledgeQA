@@ -160,6 +160,22 @@ services:
       backend:
         condition: service_healthy
 
+  # CDN 回源反代（EdgeOne CDN 边缘 HTTPS + 回源 HTTP）：前端 + /api 一体反代，免自配证书。
+  # 用 --profile cdn 启动（含 frontend）。
+  nginx-cdn:
+    image: nginx:1.27-alpine
+    container_name: web-agent-nginx-cdn
+    profiles: ["cdn"]
+    ports:
+      - "80:80"
+    volumes:
+      - ./deploy/nginx/nginx.cdn.conf:/etc/nginx/conf.d/default.conf:ro
+    depends_on:
+      backend:
+        condition: service_healthy
+      frontend:
+        condition: service_healthy
+
 volumes:
   pgdata:
   miniodata:
