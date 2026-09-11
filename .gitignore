@@ -34,6 +34,7 @@ frontend/openapi.json
 error.txt
 # Local dev database
 *.db
+*.db.bak-*
 *.sqlite
 
 # 环境与密钥（.env.example 模板除外，真实 .env 不入库）
