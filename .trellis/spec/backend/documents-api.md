@@ -66,6 +66,28 @@ CREATE UNIQUE INDEX ix_documents_user_content_hash
 - `GET /chunks/{chunk_id}` — citation jump: returns chunk text + owning doc name + total chunk count.
 - `DELETE /documents/{id}` — 204. Cancels stale `ingest_document` tasks for that doc, deletes the
   row (chunks + vectors cascade via FK `ondelete=CASCADE`), then best-effort MinIO delete.
+- `POST /documents/{id}/content` — in-place content update (multipart `file`). Reuses the upload
+  validation pipeline. Same hash as self → 200 `{updated:false}` idempotent no-op; same hash as
+  another owned doc → 409 `DUPLICATE_DOCUMENT`; `uploaded`/`processing` status → 409
+  `DOCUMENT_PROCESSING`. New content: new object key written (old object deleted best-effort),
+  `version += 1`, ingest task enqueued. Image-only PDF result → `no_text` + old chunks deleted
+  inline in the same transaction (they must stop being recallable immediately).
+- `POST /documents/{id}/reingest` — re-chunk stored bytes with current settings (`no_text` → 400
+  `NOT_INGESTABLE`; processing → 409). Syncs `chunk_size`/`chunk_overlap` to current globals so the
+  post-ingest signature matches current config; `version` unchanged.
+
+## Versioning & stale detection
+
+- Columns: `version` (content version, +1 only on content change), `ingest_signature`
+  (`{chunk_strategy}|{chunk_size}|{chunk_overlap}|{embedding_backend}|{embedding_model}` written by
+  the worker on every successful ingest; `""` = legacy unrecorded), `ingested_at`.
+  Migration `0012_document_version_ingest` backfills `ready` rows from env so they don't false-positive.
+- `stale` is **computed, never stored**: `services/doc_sync.py::stale_reasons` compares the stored
+  signature against current settings per request. Only `status == "ready"` docs with a non-empty
+  signature participate. `GET` endpoints serialize via `_to_out()` which attaches
+  `stale` / `stale_reasons`.
+- Worker `ingest_document` is replay-idempotent (delete-then-insert chunks in one transaction), so
+  both content update and reingest reuse the same `ingest_document` task type — no new task type.
 
 ## Validation & Error Matrix
 

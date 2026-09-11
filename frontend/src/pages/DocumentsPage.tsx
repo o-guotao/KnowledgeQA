@@ -3,8 +3,8 @@ import { useCallback, useEffect, useRef, useState } from "react";
 import { useNavigate } from "react-router-dom";
 import { z } from "zod";
 
-import { del, get, postForm } from "../api/client";
-import { DocumentSchema, type KnowledgeDocument } from "../api/schemas";
+import { del, get, post, postForm } from "../api/client";
+import { ContentUpdateResultSchema, DocumentSchema, type KnowledgeDocument } from "../api/schemas";
 import { ConfirmDialog } from "../components/ConfirmDialog";
 import { DocumentPreviewModal } from "../components/DocumentPreviewModal";
 import { ThemeToggle } from "../components/ThemeToggle";
@@ -179,6 +179,48 @@ export function DocumentsPage() {
   const [singleConfirm, setSingleConfirm] = useState<KnowledgeDocument | null>(null);
   const [bulkConfirm, setBulkConfirm] = useState(false);
   const [bulkDeleting, setBulkDeleting] = useState(false);
+  // 增量更新与失效检测：一键重切 + 就地更新内容
+  const [reingestingId, setReingestingId] = useState<string | null>(null);
+  const [updateTarget, setUpdateTarget] = useState<KnowledgeDocument | null>(null);
+  const [updatingContent, setUpdatingContent] = useState(false);
+  const updateFileRef = useRef<HTMLInputElement>(null);
+
+  /** 一键刷新：按当前配置对已存储内容重新切分（stale / failed 文档）。 */
+  const reingest = async (doc: KnowledgeDocument) => {
+    setReingestingId(doc.id);
+    try {
+      await post(`/documents/${doc.id}/reingest`, {}, DocumentSchema);
+      refresh();
+    } catch (err) {
+      alert(err instanceof Error ? err.message : "重新切分失败");
+    } finally {
+      setReingestingId(null);
+    }
+  };
+
+  /** 就地更新：选择新文件 → hash 比对 → 替换内容并重切（version+1）。 */
+  const onSelectUpdateFile = async (list: FileList | null) => {
+    const file = list?.[0];
+    const target = updateTarget;
+    if (!file || !target) return;
+    setUpdatingContent(true);
+    try {
+      const form = new FormData();
+      form.append("file", file);
+      const result = await postForm(
+        `/documents/${target.id}/content`,
+        form,
+        ContentUpdateResultSchema,
+      );
+      if (!result.updated) alert("内容与当前版本相同，无需更新");
+      refresh();
+    } catch (err) {
+      alert(err instanceof Error ? err.message : "更新内容失败");
+    } finally {
+      setUpdatingContent(false);
+      setUpdateTarget(null);
+    }
+  };
 
   const toggleSelect = (id: string) =>
     setSelected((prev) => {
@@ -274,6 +316,17 @@ export function DocumentsPage() {
               className="hidden"
               onChange={(e) => {
                 void onSelectFiles(e.target.files);
+                e.target.value = "";
+              }}
+            />
+            {/* 就地更新内容用：单选文件，目标文档由 updateTarget 暂存 */}
+            <input
+              ref={updateFileRef}
+              type="file"
+              accept=".txt,.md,.markdown,.pdf"
+              className="hidden"
+              onChange={(e) => {
+                void onSelectUpdateFile(e.target.files);
                 e.target.value = "";
               }}
             />
@@ -475,6 +528,14 @@ export function DocumentsPage() {
                       <div className="flex flex-wrap items-center gap-2">
                         <p className="truncate font-medium text-theme-text">{d.filename}</p>
                         <Badge variant={meta.variant}>{meta.label}</Badge>
+                        <span className="text-xs text-theme-sub" title={`内容版本 v${d.version}`}>
+                          v{d.version}
+                        </span>
+                        {d.stale && (
+                          <Badge variant="warning" title={d.stale_reasons.join("\n")}>
+                            需刷新
+                          </Badge>
+                        )}
                         {d.folder && (
                           <span className="rounded bg-brand/15 px-1.5 py-0.5 text-xs text-brand-light">{d.folder}</span>
                         )}
@@ -497,6 +558,37 @@ export function DocumentsPage() {
                           <p className="text-theme-sub">{sideText}</p>
                         )}
                       </div>
+                      {(d.stale || d.status === "failed") && (
+                        <Button
+                          variant="ghost"
+                          size="icon"
+                          aria-label={`重新切分 ${d.filename}`}
+                          title="按当前配置重新切分"
+                          disabled={reingestingId === d.id}
+                          onClick={() => void reingest(d)}
+                          className="shrink-0 cursor-pointer text-amber-500 hover:bg-amber-500/15 hover:text-amber-400"
+                        >
+                          {reingestingId === d.id ? (
+                            <Loader2 size={15} className="animate-spin" />
+                          ) : (
+                            <RefreshCw size={15} />
+                          )}
+                        </Button>
+                      )}
+                      <Button
+                        variant="ghost"
+                        size="icon"
+                        aria-label={`更新 ${d.filename} 内容`}
+                        title="上传新内容（版本 +1）"
+                        disabled={updatingContent || PENDING_STATUSES.includes(d.status)}
+                        onClick={() => {
+                          setUpdateTarget(d);
+                          updateFileRef.current?.click();
+                        }}
+                        className="shrink-0 cursor-pointer text-theme-sub hover:bg-white/10 hover:text-theme-sub"
+                      >
+                        <FileUp size={15} />
+                      </Button>
                       <Button
                         variant="ghost"
                         size="icon"

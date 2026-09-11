@@ -5,7 +5,7 @@ from urllib.parse import quote
 
 from fastapi import APIRouter, Depends, Form, UploadFile
 from fastapi.responses import Response
-from sqlalchemy import select
+from sqlalchemy import select, text
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.ext.asyncio import AsyncSession
 
@@ -22,9 +22,11 @@ from app.schemas.document import (
     BatchDeleteRequest,
     BatchDeleteResponse,
     ChunkOut,
+    ContentUpdateResult,
     DocumentOut,
     DocumentUpdate,
 )
+from app.services.doc_sync import stale_reasons
 from app.services.storage import delete_object, get_object, put_object
 
 logger = logging.getLogger(__name__)
@@ -58,6 +60,42 @@ def _normalize_filename(raw: str) -> str:
     if not 1 <= len(name) <= 255:
         raise AppError("INVALID_FILENAME", "文件名长度需在 1-255 之间", 400)
     return name
+
+
+def _to_out(document: Document) -> DocumentOut:
+    """序列化文档并计算失效检测字段（stale = 入库签名 vs 当前 settings 的纯函数）。"""
+    out = DocumentOut.model_validate(document)
+    reasons = stale_reasons(document, get_settings())
+    out.stale = bool(reasons)
+    out.stale_reasons = reasons
+    return out
+
+
+async def _get_owned_document(document_id: uuid.UUID, user: User, db: AsyncSession) -> Document:
+    document = (
+        await db.execute(
+            select(Document).where(Document.id == document_id, Document.user_id == user.id)
+        )
+    ).scalar_one_or_none()
+    if document is None:
+        raise not_found("文档")
+    return document
+
+
+def _enqueue_ingest(document: Document, user: User, db: AsyncSession) -> None:
+    """置 uploaded 并入队切分任务（worker 重放幂等：先清旧块再写新块）。"""
+    settings = get_settings()
+    document.status = "uploaded"
+    document.error = None
+    db.add(
+        Task(
+            type="ingest_document",
+            payload={"document_id": str(document.id)},
+            user_id=user.id,
+            trace_id=get_trace_id(),
+            max_retries=settings.task_max_retries,
+        )
+    )
 
 
 @router.post("/documents", response_model=DocumentOut, status_code=201)
@@ -137,7 +175,7 @@ async def upload_document(
         await db.rollback()
         raise AppError("DUPLICATE_DOCUMENT", f"内容已存在，原文件：{filename}", 409)
     await db.refresh(document)
-    return DocumentOut.model_validate(document)
+    return _to_out(document)
 
 
 @router.get("/documents", response_model=list[DocumentOut])
@@ -152,7 +190,7 @@ async def list_documents(
     rows = (
         await db.execute(stmt.order_by(Document.folder.asc(), Document.created_at.desc()))
     ).scalars().all()
-    return [DocumentOut.model_validate(d) for d in rows]
+    return [_to_out(d) for d in rows]
 
 
 @router.get("/documents/folders", response_model=list[str])
@@ -189,7 +227,7 @@ async def update_document(
         document.tags = [t.strip() for t in body.tags if t.strip()][:20]
     await db.commit()
     await db.refresh(document)
-    return DocumentOut.model_validate(document)
+    return _to_out(document)
 
 
 @router.post("/documents/batch-delete", response_model=BatchDeleteResponse)
@@ -235,7 +273,125 @@ async def get_document(
     ).scalar_one_or_none()
     if document is None:
         raise not_found("文档")
-    return DocumentOut.model_validate(document)
+    return _to_out(document)
+
+
+@router.post("/documents/{document_id}/content", response_model=ContentUpdateResult)
+async def update_document_content(
+    document_id: uuid.UUID,
+    file: UploadFile,
+    db: AsyncSession = Depends(get_db),
+    user: User = Depends(get_current_user),
+) -> ContentUpdateResult:
+    """就地更新文档内容：hash 比对后替换对象文件并重新切分，version+1，文档 id 不变。
+
+    - 内容与本文档当前 hash 相同：幂等 no-op（updated=false，不入队）
+    - 内容与其他文档相同：409 DUPLICATE_DOCUMENT（预查 + 唯一索引兜底）
+    - 处理中（uploaded/processing）：409，避免与在途 ingest 竞争
+    - 新内容为纯图片 PDF：no_text 终态，旧切块同事务内联清空
+    """
+    document = await _get_owned_document(document_id, user, db)
+    if document.status in ("uploaded", "processing"):
+        raise AppError("DOCUMENT_PROCESSING", "文档正在处理中，请稍后重试", 409)
+
+    data = await file.read()
+    if not data:
+        raise AppError("EMPTY_FILE", "文件内容为空")
+    if len(data) > MAX_UPLOAD_BYTES:
+        raise AppError("FILE_TOO_LARGE", "文件超过 20MB 限制", 413)
+    filename = _normalize_filename(file.filename)
+    if not filename.lower().endswith((".txt", ".md", ".markdown", ".pdf")):
+        raise AppError("BAD_FILE_TYPE", "仅支持 .txt/.md/.pdf")
+
+    content_hash = hashlib.sha256(data).hexdigest()
+    if content_hash == document.content_hash:
+        return ContentUpdateResult(updated=False, document=_to_out(document))
+    dup = (
+        await db.execute(
+            select(Document.filename)
+            .where(
+                Document.user_id == user.id,
+                Document.content_hash == content_hash,
+                Document.id != document.id,
+            )
+            .limit(1)
+        )
+    ).scalar_one_or_none()
+    if dup is not None:
+        raise AppError("DUPLICATE_DOCUMENT", f"内容已存在，原文件：{dup}", 409)
+
+    # PDF 探测（与上传一致）：不可解析 4xx 拒绝；无文字层进 no_text
+    status = "uploaded"
+    if filename.lower().endswith(".pdf"):
+        from app.services.chunking import extract_text  # 懒加载
+
+        try:
+            no_text = not extract_text(filename, data)
+        except Exception:
+            raise AppError("BAD_FILE_TYPE", "PDF 无法解析（文件损坏或已加密），未保存", 400)
+        if no_text:
+            status = "no_text"
+
+    old_object_key = document.object_key
+    document.object_key = f"{user.id}/{document.id}/{filename}"
+    await put_object(document.object_key, data)
+
+    document.filename = filename
+    document.content_hash = content_hash
+    document.version += 1
+
+    if status == "no_text":
+        # ready → no_text：旧切块立即失效，同事务内联清理（不入队）
+        await db.execute(
+            text("DELETE FROM chunks WHERE document_id = :did"), {"did": str(document.id)}
+        )
+        document.chunk_count = 0
+        document.status = "no_text"
+        document.error = None
+    else:
+        _enqueue_ingest(document, user, db)
+
+    try:
+        await db.commit()
+    except IntegrityError:
+        # 并发兜底：(user_id, content_hash) 部分唯一索引拦下
+        await db.rollback()
+        raise AppError("DUPLICATE_DOCUMENT", f"内容已存在，原文件：{filename}", 409)
+
+    if old_object_key and old_object_key != document.object_key:
+        try:
+            await delete_object(old_object_key)
+        except Exception:
+            logger.warning("删除旧文档对象失败: %s", old_object_key, exc_info=True)
+
+    await db.refresh(document)
+    return ContentUpdateResult(updated=True, document=_to_out(document))
+
+
+@router.post("/documents/{document_id}/reingest", response_model=DocumentOut)
+async def reingest_document(
+    document_id: uuid.UUID,
+    db: AsyncSession = Depends(get_db),
+    user: User = Depends(get_current_user),
+) -> DocumentOut:
+    """用当前 settings 对已存储内容重新切分（stale 一键刷新 / failed 重试共用）。
+
+    同步 chunk_size/chunk_overlap 为当前全局值，使重切后 ingest_signature 与当前
+    配置一致、stale 消除；version 不变（内容未变）。
+    """
+    document = await _get_owned_document(document_id, user, db)
+    if document.status == "no_text":
+        raise AppError("NOT_INGESTABLE", "纯图片 PDF 无文字层，无法切分", 400)
+    if document.status in ("uploaded", "processing"):
+        raise AppError("DOCUMENT_PROCESSING", "文档正在处理中，请稍后重试", 409)
+
+    settings = get_settings()
+    document.chunk_size = settings.chunk_size
+    document.chunk_overlap = settings.chunk_overlap
+    _enqueue_ingest(document, user, db)
+    await db.commit()
+    await db.refresh(document)
+    return _to_out(document)
 
 
 @router.get("/documents/{document_id}/file")

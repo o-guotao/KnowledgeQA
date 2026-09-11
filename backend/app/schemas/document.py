@@ -15,10 +15,22 @@ class DocumentOut(BaseModel):
     chunk_overlap: int
     chunk_count: int
     error: str | None
+    version: int = 1
+    ingested_at: datetime | None = None
+    # 失效检测：非 ORM 列，由 API 层按「文档签名 vs 当前 settings」计算后填入
+    stale: bool = False
+    stale_reasons: list[str] = []
     created_at: datetime
     updated_at: datetime
 
     model_config = {"from_attributes": True}
+
+
+class ContentUpdateResult(BaseModel):
+    """就地更新响应：updated=false 表示内容 hash 未变（幂等 no-op）。"""
+
+    updated: bool
+    document: DocumentOut
 
 
 class DocumentUpdate(BaseModel):

@@ -84,10 +84,21 @@ export const DocumentSchema = z.object({
   chunk_overlap: z.number(),
   chunk_count: z.number(),
   error: z.string().nullable(),
+  version: z.number().default(1),
+  ingested_at: z.string().nullable().default(null),
+  stale: z.boolean().default(false),
+  stale_reasons: z.array(z.string()).default([]),
   created_at: z.string(),
   updated_at: z.string(),
 });
 export type KnowledgeDocument = z.infer<typeof DocumentSchema>;
+
+/** 就地更新响应：updated=false 表示内容未变化（幂等 no-op） */
+export const ContentUpdateResultSchema = z.object({
+  updated: z.boolean(),
+  document: DocumentSchema,
+});
+export type ContentUpdateResult = z.infer<typeof ContentUpdateResultSchema>;
 
 export const FeedbackStatsSchema = z.object({
   total_answered: z.number(),

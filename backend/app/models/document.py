@@ -39,6 +39,11 @@ class Document(Base):
     chunk_overlap: Mapped[int] = mapped_column(Integer, default=64)
     chunk_count: Mapped[int] = mapped_column(Integer, default=0)
     error: Mapped[str | None] = mapped_column(Text, nullable=True)
+    # 增量更新与失效检测：version 仅内容变更 +1；ingest_signature 为最近成功入库时的
+    # 切分策略/参数 + embedding 配置快照（见 services/doc_sync.py），空串表示历史未记录
+    version: Mapped[int] = mapped_column(Integer, default=1)
+    ingest_signature: Mapped[str] = mapped_column(String(128), default="")
+    ingested_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now())
     updated_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True), server_default=func.now(), onupdate=func.now()

@@ -178,6 +178,13 @@ async def ingest_document(document_id: uuid.UUID) -> None:
         document.status = "ready"
         document.chunk_count = chunk_count
         document.error = None
+        # 记录本次入库的配置快照与时间，供 stale 失效检测比对
+        from app.services.doc_sync import current_ingest_signature
+
+        document.ingest_signature = current_ingest_signature(
+            settings, document.chunk_size, document.chunk_overlap
+        )
+        document.ingested_at = datetime.now(timezone.utc)
         await db.commit()
 
 
