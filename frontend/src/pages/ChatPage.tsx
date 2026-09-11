@@ -1,4 +1,4 @@
-import { BookOpenText, Files, LayoutDashboard, LogOut, Menu, MessageSquare, Quote, Settings2, ShieldCheck, X, Zap } from "lucide-react";
+import { BookOpenText, Files, History, LayoutDashboard, LogOut, Menu, MessageSquare, Quote, Settings2, ShieldCheck, X, Zap } from "lucide-react";
 import { useCallback, useEffect, useRef, useState } from "react";
 import { z } from "zod";
 import { useLocation, useNavigate } from "react-router-dom";
@@ -7,6 +7,7 @@ import { del, get, post } from "../api/client";
 import {
   MessageSchema,
   SessionSchema,
+  VersionInfoSchema,
   type ChatEvent,
   type Session,
 } from "../api/schemas";
@@ -39,12 +40,20 @@ export function ChatPage() {
   // 检索片段数 top_k：与后端 rag_top_k 默认一致，可在侧栏「知识库设置」手动调整
   const [topK, setTopK] = useState(5);
   const [sidebarOpen, setSidebarOpen] = useState(false);
+  // 应用版本号（单一来源：后端 /api/meta/version ↔ 根 VERSION 文件）
+  const [appVersion, setAppVersion] = useState("");
   // 正在本地流式作答的会话 id：activeId 切换会触发历史加载，需据此跳过以免清掉乐观消息
   const turnSessionRef = useRef<string | null>(null);
   // 该在途会话的乐观消息当前是否正显示在列表中（中途切走再切回时已非乐观列表，须走真实历史加载）
   const turnVisibleRef = useRef(false);
   const bottomRef = useRef<HTMLDivElement>(null);
   const { streaming, send, stop } = useChatStream();
+
+  useEffect(() => {
+    get("/meta/version", VersionInfoSchema)
+      .then((r) => setAppVersion(r.version))
+      .catch(() => setAppVersion(""));
+  }, []);
 
   const refreshSessions = useCallback(() => {
     get("/sessions", z.array(SessionSchema))
@@ -253,13 +262,25 @@ export function ChatPage() {
       {sidebarOpen && <button type="button" aria-label="关闭导航" onClick={() => setSidebarOpen(false)} className="fixed inset-0 z-20 bg-slate-950/40 lg:hidden" />}
       <aside className={`fixed inset-y-0 left-0 z-30 flex w-80 -translate-x-full flex-col gap-5 overflow-y-auto border-r border-white/5 bg-gradient-to-b from-theme-deep via-theme-deep to-theme-bg p-4 shadow-2xl transition-transform lg:static lg:w-72 lg:translate-x-0 lg:shadow-none ${sidebarOpen ? "translate-x-0" : ""}`}>
         <div className="flex items-center justify-between px-1 text-theme-text"><div className="flex items-center gap-2 text-lg font-semibold"><BookOpenText size={21} className="text-brand-light" />内知</div><button type="button" className="rounded-md p-1 text-slate-400 hover:bg-white/10 lg:hidden" aria-label="关闭导航" onClick={() => setSidebarOpen(false)}><X size={18} /></button></div>
-        <p className="-mt-3 px-1 text-xs text-slate-500">KnowledgeQA · 内部知识助手</p>
+        <p className="-mt-3 px-1 text-xs text-slate-500">
+          KnowledgeQA · 内部知识助手{appVersion && (
+            <button
+              type="button"
+              onClick={() => navigate("/changelog")}
+              className="ml-2 cursor-pointer rounded bg-white/10 px-1.5 py-0.5 font-mono text-[10px] text-brand-light hover:bg-white/15"
+              title="查看更新日志"
+            >
+              v{appVersion}
+            </button>
+          )}
+        </p>
         <nav className="flex flex-col gap-1 border-b border-white/10 pb-3" aria-label="主导航">
           {[
             { label: "对话", to: "/", icon: MessageSquare },
             { label: "文档库", to: "/documents", icon: Files },
             { label: "模型设置", to: "/settings/models", icon: Settings2 },
             ...(user?.role === "admin" ? [{ label: "管理后台", to: "/admin", icon: LayoutDashboard }] : []),
+            { label: "更新日志", to: "/changelog", icon: History },
           ].map(({ label, to, icon: Icon }) => {
             const active = location.pathname === to;
             return (

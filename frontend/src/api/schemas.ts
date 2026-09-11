@@ -103,6 +103,23 @@ export const ContentUpdateResultSchema = z.object({
 });
 export type ContentUpdateResult = z.infer<typeof ContentUpdateResultSchema>;
 
+// ---------- 版本与更新日志 ----------
+export const VersionInfoSchema = z.object({
+  version: z.string(),
+});
+export type VersionInfo = z.infer<typeof VersionInfoSchema>;
+
+export const ChangelogGroupSchema = z.object({
+  title: z.string(),
+  items: z.array(z.string()),
+});
+export const ChangelogEntrySchema = z.object({
+  version: z.string(),
+  date: z.string(),
+  groups: z.array(ChangelogGroupSchema),
+});
+export type ChangelogEntry = z.infer<typeof ChangelogEntrySchema>;
+
 export const FeedbackStatsSchema = z.object({
   total_answered: z.number(),
   up_count: z.number(),
