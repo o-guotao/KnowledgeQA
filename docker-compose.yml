@@ -75,6 +75,9 @@ services:
       - "8000:8000"
     volumes:
       - modelcache:/data/models
+      # 版本与更新日志：构建上下文是 ./backend 拷不进根文件，运行时装载（version.py 解析到 /VERSION）
+      - ./VERSION:/VERSION:ro
+      - ./CHANGELOG.md:/CHANGELOG.md:ro
     depends_on:
       db:
         condition: service_healthy
