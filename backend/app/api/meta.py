@@ -36,7 +36,7 @@ def _parse_changelog(text: str) -> list[dict]:
             current["groups"].append(group)
             continue
         if line.startswith("- ") and group is not None:
-            group["items"].append(line[2].strip())
+            group["items"].append(line[2:].strip())
     return releases
 
 
