@@ -1,10 +1,11 @@
-import { ArrowLeft, Eye, FileUp, Layers, Loader2, Quote, RefreshCw, Trash2, X } from "lucide-react";
+import { ArrowLeft, Eye, FileUp, Layers, Loader2, Quote, RefreshCw, Share2, Trash2, Users, X } from "lucide-react";
 import { useCallback, useEffect, useRef, useState } from "react";
 import { useNavigate } from "react-router-dom";
 import { z } from "zod";
 
-import { del, get, post, postForm } from "../api/client";
+import { del, get, patch, post, postForm } from "../api/client";
 import { ContentUpdateResultSchema, DocumentSchema, type KnowledgeDocument } from "../api/schemas";
+import { useAuth } from "../auth/AuthContext";
 import { ConfirmDialog } from "../components/ConfirmDialog";
 import { DocumentPreviewModal } from "../components/DocumentPreviewModal";
 import { ThemeToggle } from "../components/ThemeToggle";
@@ -74,7 +75,12 @@ function fmtTime(iso: string): string {
 /** 上传文档 + 切分状态管理（独立菜单页）。仅当存在排队/切分中的文档时才轮询。 */
 export function DocumentsPage() {
   const navigate = useNavigate();
+  const { user } = useAuth();
+  const [tab, setTab] = useState<"mine" | "team">("mine");
   const [docs, setDocs] = useState<KnowledgeDocument[]>([]);
+  const [teamDocs, setTeamDocs] = useState<KnowledgeDocument[]>([]);
+  const [shareTogglingId, setShareTogglingId] = useState<string | null>(null);
+  const [shareTeam, setShareTeam] = useState(false);
   const [queue, setQueue] = useState<PendingFile[]>([]);
   const [uploading, setUploading] = useState(false);
   const [preview, setPreview] = useState<KnowledgeDocument | null>(null);
@@ -90,9 +96,35 @@ export function DocumentsPage() {
       .catch((err) => console.error("documents fetch failed", err));
   }, []);
 
+  const refreshTeam = useCallback(() => {
+    get<KnowledgeDocument[]>("/documents/team", z.array(DocumentSchema))
+      .then(setTeamDocs)
+      .catch((err) => console.error("team documents fetch failed", err));
+  }, []);
+
   useEffect(() => {
     refresh();
   }, [refresh]);
+
+  // 切到团队空间 Tab 时拉取共享文档
+  useEffect(() => {
+    if (tab === "team") refreshTeam();
+  }, [tab, refreshTeam]);
+
+  /** 共享/取消共享到团队空间（owner 或 admin） */
+  const toggleShare = async (doc: KnowledgeDocument) => {
+    setShareTogglingId(doc.id);
+    try {
+      const next = doc.visibility === "team" ? "private" : "team";
+      await patch(`/documents/${doc.id}`, { visibility: next }, DocumentSchema);
+      refresh();
+      if (tab === "team") refreshTeam();
+    } catch (err) {
+      alert(err instanceof Error ? err.message : "操作失败");
+    } finally {
+      setShareTogglingId(null);
+    }
+  };
 
   const pendingCount = docs.filter((d) => PENDING_STATUSES.includes(d.status)).length;
 
@@ -158,6 +190,7 @@ export function DocumentsPage() {
         form.append("file", item.file);
         if (uploadFolder.trim()) form.append("folder", uploadFolder.trim());
         if (uploadTags.trim()) form.append("tags", uploadTags.trim());
+        if (shareTeam) form.append("visibility", "team");
         const created = await postForm<KnowledgeDocument>("/documents", form, DocumentSchema);
         setDocs((prev) => [created, ...prev]);
         setQueue((prev) => prev.filter((x) => x.id !== item.id));
@@ -235,6 +268,7 @@ export function DocumentsPage() {
     try {
       await del(`/documents/${doc.id}`);
       setDocs((prev) => prev.filter((d) => d.id !== doc.id));
+      setTeamDocs((prev) => prev.filter((d) => d.id !== doc.id));
       setSelected((prev) => {
         const next = new Set(prev);
         next.delete(doc.id);
@@ -333,13 +367,40 @@ export function DocumentsPage() {
           </div>
         </header>
 
+        {/* 空间切换：我的文档 | 团队空间 */}
+        <div className="flex gap-1 border-b border-theme-line">
+          {([["mine", "我的文档"], ["team", "团队空间"]] as const).map(([key, label]) => (
+            <button
+              key={key}
+              type="button"
+              onClick={() => setTab(key)}
+              className={`-mb-px cursor-pointer border-b-2 px-4 py-2 text-sm transition-colors ${
+                tab === key
+                  ? "border-brand font-medium text-brand"
+                  : "border-transparent text-theme-sub hover:text-theme-text"
+              }`}
+            >
+              {label}
+            </button>
+          ))}
+        </div>
+
+        {tab === "mine" && (
         <p className="max-w-3xl text-sm leading-6 text-theme-sub">
           上传制度、手册或 FAQ（.txt/.md/.pdf，单个 ≤ 20MB，可一次多选）。系统对重复内容/纯图片 PDF 做校验并明确提示；
           合规文档自动切分入库，之后即可在问答中检索并带引用回答。
           {pendingCount > 0 && " 有文档正在处理，将自动刷新直到完成。"}
         </p>
+        )}
+
+        {tab === "team" && (
+        <p className="max-w-3xl text-sm leading-6 text-theme-sub">
+          团队成员共享的文档，全员可检索与预览；管理（取消共享/删除）由文档所有者或管理员操作。
+        </p>
+        )}
 
         {/* 本批上传归属：文件夹与标签（可选） */}
+        {tab === "mine" && (
         <div className="flex flex-wrap items-center gap-3 rounded-lg border border-theme-line bg-theme-card px-4 py-3 text-sm">
           <label className="flex items-center gap-2 text-theme-sub">
             文件夹
@@ -359,11 +420,22 @@ export function DocumentsPage() {
               className="w-56 rounded-md border border-theme-line bg-theme-input px-2 py-1 text-sm text-theme-text placeholder:text-theme-sub focus:border-brand focus:outline-none"
             />
           </label>
+          <label className="flex cursor-pointer items-center gap-2 text-theme-sub">
+            <input
+              type="checkbox"
+              checked={shareTeam}
+              onChange={(e) => setShareTeam(e.target.checked)}
+              className="accent-brand"
+            />
+            <Users size={14} />
+            上传到团队空间（全员可检索）
+          </label>
           <span className="text-xs text-theme-sub">应用于本批上传，便于分类与检索</span>
         </div>
+        )}
 
         {/* 待上传/上传结果面板 */}
-        {queue.length > 0 && (
+        {tab === "mine" && queue.length > 0 && (
           <Card>
             <CardContent className="space-y-2 py-4">
               <div className="flex items-center justify-between gap-2">
@@ -429,6 +501,8 @@ export function DocumentsPage() {
           </Card>
         )}
 
+        {tab === "mine" && (
+        <>
         <div className="flex flex-wrap items-center gap-2 text-sm">
           <button
             type="button"
@@ -476,7 +550,94 @@ export function DocumentsPage() {
             )}
           </div>
         )}
+        </>
+        )}
 
+        {tab === "team" && (
+        <section className="space-y-3">
+          {teamDocs.length === 0 ? (
+            <div className="flex flex-col items-center rounded-2xl border border-dashed border-theme-line bg-theme-card/60 px-6 py-16 text-center">
+              <div className="flex h-12 w-12 items-center justify-center rounded-xl bg-brand/15 text-brand-light">
+                <Users size={22} />
+              </div>
+              <p className="mt-5 font-medium text-theme-text">团队空间还没有共享文档</p>
+              <p className="mt-1 text-sm text-theme-sub">在「我的文档」中点击共享按钮，即可把文档共享给全员检索</p>
+            </div>
+          ) : (
+            teamDocs.map((d) => {
+              const meta = STATUS_META[d.status];
+              return (
+                <Card key={d.id} className="transition-shadow hover:shadow-card">
+                  <CardContent className="flex flex-col gap-2 py-4 sm:flex-row sm:items-center sm:justify-between">
+                    <div className="min-w-0">
+                      <div className="flex flex-wrap items-center gap-2">
+                        <p className="truncate font-medium text-theme-text">{d.filename}</p>
+                        <Badge variant={meta.variant}>{meta.label}</Badge>
+                        {d.stale && (
+                          <Badge variant="warning" title={d.stale_reasons.join("\n")}>
+                            需刷新
+                          </Badge>
+                        )}
+                        {d.owner_name && (
+                          <span className="rounded bg-brand/15 px-1.5 py-0.5 text-xs text-brand-light">
+                            {d.owner_name}
+                          </span>
+                        )}
+                      </div>
+                      <p className="mt-1 text-xs text-theme-sub">
+                        {fmtTime(d.created_at)}
+                        {d.status === "ready" && ` · ${d.chunk_count} 个切块`}
+                      </p>
+                    </div>
+                    <div className="flex shrink-0 items-center gap-3">
+                      <Button
+                        variant="ghost"
+                        size="icon"
+                        aria-label={`预览 ${d.filename}`}
+                        onClick={() => setPreview(d)}
+                        className="shrink-0 cursor-pointer text-theme-sub hover:bg-white/10 hover:text-theme-sub"
+                      >
+                        <Eye size={15} />
+                      </Button>
+                      {user?.role === "admin" && (
+                        <>
+                          <Button
+                            variant="ghost"
+                            size="icon"
+                            aria-label={`取消共享 ${d.filename}`}
+                            title="取消共享（移出团队空间）"
+                            disabled={shareTogglingId === d.id}
+                            onClick={() => void toggleShare(d)}
+                            className="shrink-0 cursor-pointer text-theme-sub hover:bg-white/10 hover:text-theme-sub"
+                          >
+                            {shareTogglingId === d.id ? (
+                              <Loader2 size={15} className="animate-spin" />
+                            ) : (
+                              <Share2 size={15} />
+                            )}
+                          </Button>
+                          <Button
+                            variant="ghost"
+                            size="icon"
+                            aria-label={`删除 ${d.filename}`}
+                            disabled={deletingId === d.id}
+                            onClick={() => setSingleConfirm(d)}
+                            className="shrink-0 cursor-pointer text-theme-sub hover:bg-red-500/15 hover:text-red-400"
+                          >
+                            {deletingId === d.id ? <Loader2 size={15} className="animate-spin" /> : <Trash2 size={15} />}
+                          </Button>
+                        </>
+                      )}
+                    </div>
+                  </CardContent>
+                </Card>
+              );
+            })
+          )}
+        </section>
+        )}
+
+        {tab === "mine" && (
         <section className="space-y-3">
           {docs.length === 0 ? (
             <div className="flex flex-col items-center rounded-2xl border border-dashed border-theme-line bg-theme-card/60 px-6 py-16 text-center">
@@ -536,6 +697,11 @@ export function DocumentsPage() {
                             需刷新
                           </Badge>
                         )}
+                        {d.visibility === "team" && (
+                          <span className="rounded bg-emerald-500/15 px-1.5 py-0.5 text-xs text-emerald-400" title="已共享到团队空间，全员可检索">
+                            团队
+                          </span>
+                        )}
                         {d.folder && (
                           <span className="rounded bg-brand/15 px-1.5 py-0.5 text-xs text-brand-light">{d.folder}</span>
                         )}
@@ -592,6 +758,23 @@ export function DocumentsPage() {
                       <Button
                         variant="ghost"
                         size="icon"
+                        aria-label={d.visibility === "team" ? `取消共享 ${d.filename}` : `共享 ${d.filename} 到团队空间`}
+                        title={d.visibility === "team" ? "取消共享（移出团队空间）" : "共享到团队空间（全员可检索）"}
+                        disabled={shareTogglingId === d.id}
+                        onClick={() => void toggleShare(d)}
+                        className={`shrink-0 cursor-pointer hover:bg-emerald-500/15 hover:text-emerald-400 ${
+                          d.visibility === "team" ? "text-emerald-400" : "text-theme-sub"
+                        }`}
+                      >
+                        {shareTogglingId === d.id ? (
+                          <Loader2 size={15} className="animate-spin" />
+                        ) : (
+                          <Share2 size={15} />
+                        )}
+                      </Button>
+                      <Button
+                        variant="ghost"
+                        size="icon"
                         aria-label={`预览 ${d.filename}`}
                         disabled={deletingId === d.id}
                         onClick={() => setPreview(d)}
@@ -616,6 +799,7 @@ export function DocumentsPage() {
             })
           )}
         </section>
+        )}
 
         {preview && (
           <DocumentPreviewModal

@@ -33,6 +33,8 @@ class Document(Base):
     # 文档组织：文件夹（单层路径如 "制度/人事"）与标签（JSON 字符串数组）
     folder: Mapped[str] = mapped_column(String(128), default="", index=True)
     tags: Mapped[list] = mapped_column(JSON, default=list)
+    # 可见性：private（仅本人/admin）| team（团队空间，全部登录用户可检索/预览）
+    visibility: Mapped[str] = mapped_column(String(16), default="private", index=True)
     object_key: Mapped[str] = mapped_column(String(512))
     status: Mapped[str] = mapped_column(String(16), default="uploaded", index=True)
     chunk_size: Mapped[int] = mapped_column(Integer, default=512)

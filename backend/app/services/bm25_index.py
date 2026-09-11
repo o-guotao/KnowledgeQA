@@ -2,9 +2,10 @@
 
 - 分词：jieba（中文按词切分，英文/数字/编号保留完整 token），jieba 词典加载放线程避免阻塞
 - 排序：rank_bm25.BM25Okapi —— 真正的 BM25（TF 饱和 k1、文档长度归一 b、IDF）
-- 语料：全库 child 块；IDF 用全库统计，用户隔离在取 top 结果时按 user_id 过滤
-- 失效：以 (count, max(created_at)) 为指纹，每次查询前比对；worker 入库新块、
-  文档删除（CASCADE 清块）都会改变指纹，触发懒重建。chunk 无更新路径，故指纹充分。
+- 语料：全库 child 块；IDF 用全库统计，用户隔离在取 top 结果时按 user_id 过滤，
+  团队空间（documents.visibility='team'）的块对全部登录用户可见
+- 失效：以 (count, max(created_at), team 块数) 为指纹，每次查询前比对；worker 入库新块、
+  文档删除（CASCADE 清块）、共享/取消共享都会改变指纹，触发懒重建。chunk 无更新路径，故指纹充分。
 - 并发：构建在 asyncio.Lock 内 + to_thread，完成后原子替换，查询路径不阻塞事件循环
 
 依赖缺失（rank_bm25/jieba 未安装）时 search() 返回 None，调用方回退数据库方案。
@@ -21,6 +22,7 @@ from sqlalchemy import func, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.models.chunk import Chunk
+from app.models.document import Document
 
 logger = logging.getLogger(__name__)
 
@@ -54,28 +56,42 @@ class _Index:
     bm25: "BM25Okapi"
     chunk_ids: list[uuid.UUID]
     user_ids: list[uuid.UUID]
-    fingerprint: tuple[int, object]
+    # 团队空间标记：team 文档的块对全部登录用户可见（与 owner 过滤并联）
+    team_flags: list[bool]
+    fingerprint: tuple[int, object, int]
 
 
 _state: _Index | None = None
 _lock = asyncio.Lock()
 
 
-async def _fingerprint(db: AsyncSession) -> tuple[int, object]:
+async def _fingerprint(db: AsyncSession) -> tuple[int, object, int]:
+    """失效指纹：(child 块数, max(created_at), team 文档的 child 块数)。
+    第三项覆盖 share/unshare：可见性变化不改变块数与时间，但改变 team 块数，触发懒重建。"""
     row = (
         await db.execute(
             select(func.count(Chunk.id), func.max(Chunk.created_at)).where(Chunk.block_type == "child")
         )
     ).one()
-    return (row[0], row[1])
+    team_count = (
+        await db.execute(
+            select(func.count(Chunk.id))
+            .join(Document, Chunk.document_id == Document.id)
+            .where(Chunk.block_type == "child", Document.visibility == "team")
+        )
+    ).scalar_one()
+    return (row[0], row[1], team_count)
 
 
-def _build(rows: list[tuple[uuid.UUID, uuid.UUID, str]], fingerprint: tuple[int, object]) -> _Index:
-    corpus = [_tokenize(content) for _, _, content in rows]
+def _build(
+    rows: list[tuple[uuid.UUID, uuid.UUID, str, str]], fingerprint: tuple[int, object, int]
+) -> _Index:
+    corpus = [_tokenize(content) for _, _, content, _ in rows]
     return _Index(
         bm25=BM25Okapi(corpus),
         chunk_ids=[r[0] for r in rows],
         user_ids=[r[1] for r in rows],
+        team_flags=[r[3] == "team" for r in rows],
         fingerprint=fingerprint,
     )
 
@@ -94,10 +110,12 @@ async def _ensure_index(db: AsyncSession) -> _Index | None:
             return _state
         rows = (
             await db.execute(
-                select(Chunk.id, Chunk.user_id, Chunk.content).where(Chunk.block_type == "child")
+                select(Chunk.id, Chunk.user_id, Chunk.content, Document.visibility)
+                .join(Document, Chunk.document_id == Document.id)
+                .where(Chunk.block_type == "child")
             )
         ).all()
-        state = await asyncio.to_thread(_build, [(r[0], r[1], r[2]) for r in rows], fp)
+        state = await asyncio.to_thread(_build, [(r[0], r[1], r[2], r[3]) for r in rows], fp)
         _state = state
         logger.info(
             "bm25 index rebuilt: %d chunks",
@@ -129,7 +147,7 @@ async def search(
         score = float(scores[i])
         if score <= 0:
             break  # 降序排列，后续都是 0 分（未命中任何查询词）
-        if state.user_ids[i] != user_id:
+        if state.user_ids[i] != user_id and not state.team_flags[i]:
             continue
         hits.append((state.chunk_ids[i], round(score, 4)))
         if len(hits) >= limit:

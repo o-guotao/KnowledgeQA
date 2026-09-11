@@ -79,6 +79,9 @@ export const DocumentSchema = z.object({
   content_hash: z.string().nullable(),
   folder: z.string().default(""),
   tags: z.array(z.string()).default([]),
+  // 团队空间：private | team；owner_name 仅团队空间列表返回
+  visibility: z.enum(["private", "team"]).default("private"),
+  owner_name: z.string().nullable().default(null),
   status: z.enum(["uploaded", "processing", "ready", "failed", "no_text"]),
   chunk_size: z.number(),
   chunk_overlap: z.number(),

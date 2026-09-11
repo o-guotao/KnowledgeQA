@@ -10,6 +10,9 @@ class DocumentOut(BaseModel):
     content_hash: str | None
     folder: str = ""
     tags: list = []
+    # 可见性：private | team（团队空间）；owner_name 仅团队空间列表填充（ORM 无此列）
+    visibility: str = "private"
+    owner_name: str | None = None
     status: str
     chunk_size: int
     chunk_overlap: int
@@ -36,6 +39,7 @@ class ContentUpdateResult(BaseModel):
 class DocumentUpdate(BaseModel):
     folder: str | None = Field(default=None, max_length=128)
     tags: list[str] | None = None
+    visibility: str | None = Field(default=None, pattern="^(private|team)$")
 
 
 class BatchDeleteRequest(BaseModel):

@@ -76,6 +76,24 @@ CREATE UNIQUE INDEX ix_documents_user_content_hash
   `NOT_INGESTABLE`; processing → 409). Syncs `chunk_size`/`chunk_overlap` to current globals so the
   post-ingest signature matches current config; `version` unchanged.
 
+## Team space (visibility)
+
+- `documents.visibility`: `private` (default, migration 0013 backfills all existing rows private) | `team`.
+- Read authorization (`_can_read`): owner OR admin OR `visibility == "team"`. Others' private docs
+  still 404 (no existence leak). Applied to `GET /documents/{id}`, `GET .../file`,
+  `GET /chunks/{chunk_id}`.
+- Write authorization (`_can_write`): owner; admin only for team docs (unshare/delete). `PATCH` with
+  non-visibility fields by a non-owner admin → 403 `FORBIDDEN`.
+- `GET /documents/team` (declared BEFORE `/documents/{document_id}`): all team docs joined with
+  owner `display_name` → `owner_name`; any logged-in user.
+- Retrieval visibility is one predicate: `(Chunk.user_id == :uid) OR (Document.visibility == 'team')`
+  (always AND `status == 'ready'`), applied uniformly in vector recall (pg + sqlite), keyword DB
+  recall (tsvector + LIKE), and BM25 (`team_flags` in the in-memory index).
+- BM25 fingerprint is `(child_count, max(created_at), team_child_count)` — the third term makes
+  share/unshare trigger a lazy rebuild on the next query.
+- Upload accepts `visibility` form field (`private` default; invalid → 400 `BAD_VISIBILITY`).
+- Batch delete stays owner-only; admin team management goes through single `DELETE`.
+
 ## Versioning & stale detection
 
 - Columns: `version` (content version, +1 only on content change), `ingest_signature`

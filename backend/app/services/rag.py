@@ -11,7 +11,7 @@ import math
 import uuid
 from dataclasses import dataclass
 
-from sqlalchemy import select, text
+from sqlalchemy import or_, select, text
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.config import get_settings
@@ -19,6 +19,12 @@ from app.models.chunk import Chunk
 from app.models.document import Document
 
 logger = logging.getLogger(__name__)
+
+
+def _visible_to(user_id: uuid.UUID):
+    """召回可见性：本人全部文档 + 全员团队空间文档（需与 Chunk join Document 后使用，
+    并恒与 Document.status == 'ready' 组合）。"""
+    return or_(Chunk.user_id == user_id, Document.visibility == "team")
 
 
 @dataclass
@@ -83,7 +89,7 @@ async def _vector_recall(
         stmt = (
             select(Chunk, Document.filename)
             .join(Document, Chunk.document_id == Document.id)
-            .where(Chunk.user_id == user_id, Document.status == "ready", Chunk.block_type == "child")
+            .where(_visible_to(user_id), Document.status == "ready", Chunk.block_type == "child")
         )
         rows = (await db.execute(stmt)).all()
         scored = [
@@ -99,7 +105,7 @@ async def _vector_recall(
     stmt = (
         select(Chunk, Document.filename, distance)
         .join(Document, Chunk.document_id == Document.id)
-        .where(Chunk.user_id == user_id, Document.status == "ready", Chunk.block_type == "child")
+        .where(_visible_to(user_id), Document.status == "ready", Chunk.block_type == "child")
         .order_by(distance)
         .limit(limit)
     )
@@ -136,7 +142,7 @@ async def _bm25_recall(
             .join(Document, Chunk.document_id == Document.id)
             .where(
                 Chunk.id.in_(ids),
-                Chunk.user_id == user_id,
+                _visible_to(user_id),
                 Document.status == "ready",
                 Chunk.block_type == "child",
             )
@@ -187,7 +193,8 @@ async def _keyword_recall_db(
                         SELECT c.id, c.document_id, c.content, d.filename,
                                ({' + '.join(f"(content LIKE :kw{i})" for i in range(len(kws)))}) AS hits
                         FROM chunks c JOIN documents d ON c.document_id = d.id
-                        WHERE c.user_id = :uid AND d.status = 'ready' AND c.block_type = 'child'
+                        WHERE (c.user_id = :uid OR d.visibility = 'team')
+                          AND d.status = 'ready' AND c.block_type = 'child'
                           AND ({like_clauses})
                         ORDER BY hits DESC, c.created_at DESC
                         LIMIT :lim
@@ -209,7 +216,8 @@ async def _keyword_recall_db(
                     SELECT c.id, c.document_id, c.content, d.filename,
                            ts_rank(c.content_tsv, plainto_tsquery('simple', :q)) AS rank
                     FROM chunks c JOIN documents d ON c.document_id = d.id
-                    WHERE c.user_id = :uid AND d.status = 'ready' AND c.block_type = 'child'
+                    WHERE (c.user_id = :uid OR d.visibility = 'team')
+                      AND d.status = 'ready' AND c.block_type = 'child'
                       AND c.content_tsv @@ plainto_tsquery('simple', :q)
                     ORDER BY rank DESC
                     LIMIT :lim

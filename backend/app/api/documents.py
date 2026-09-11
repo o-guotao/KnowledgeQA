@@ -82,6 +82,16 @@ async def _get_owned_document(document_id: uuid.UUID, user: User, db: AsyncSessi
     return document
 
 
+def _can_read(document: Document, user: User) -> bool:
+    """读授权：owner / admin / 团队空间文档（全部登录用户可检索与预览）。"""
+    return document.user_id == user.id or user.role == "admin" or document.visibility == "team"
+
+
+def _can_write(document: Document, user: User) -> bool:
+    """写授权：owner；admin 仅可管理团队空间文档（取消共享/删除），他人私有文档不碰。"""
+    return document.user_id == user.id or (user.role == "admin" and document.visibility == "team")
+
+
 def _enqueue_ingest(document: Document, user: User, db: AsyncSession) -> None:
     """置 uploaded 并入队切分任务（worker 重放幂等：先清旧块再写新块）。"""
     settings = get_settings()
@@ -103,9 +113,12 @@ async def upload_document(
     file: UploadFile,
     folder: str = Form(""),
     tags: str = Form(""),
+    visibility: str = Form("private"),
     db: AsyncSession = Depends(get_db),
     user: User = Depends(get_current_user),
 ) -> DocumentOut:
+    if visibility not in ("private", "team"):
+        raise AppError("BAD_VISIBILITY", "visibility 仅支持 private/team", 400)
     data = await file.read()
     if not data:
         raise AppError("EMPTY_FILE", "文件内容为空")
@@ -147,6 +160,7 @@ async def upload_document(
         content_hash=content_hash,
         folder=folder.strip()[:128],
         tags=tag_list,
+        visibility=visibility,
         object_key="",
         status=status,
         chunk_size=settings.chunk_size,
@@ -206,6 +220,27 @@ async def list_folders(
     return sorted(rows)
 
 
+@router.get("/documents/team", response_model=list[DocumentOut])
+async def list_team_documents(
+    db: AsyncSession = Depends(get_db), user: User = Depends(get_current_user)
+) -> list[DocumentOut]:
+    """团队空间：全员共享（visibility=team）文档列表，附 owner 显示名。任何登录用户可访问。"""
+    rows = (
+        await db.execute(
+            select(Document, User.display_name)
+            .join(User, Document.user_id == User.id)
+            .where(Document.visibility == "team")
+            .order_by(Document.created_at.desc())
+        )
+    ).all()
+    result: list[DocumentOut] = []
+    for doc, owner_name in rows:
+        out = _to_out(doc)
+        out.owner_name = owner_name or None
+        result.append(out)
+    return result
+
+
 @router.patch("/documents/{document_id}", response_model=DocumentOut)
 async def update_document(
     document_id: uuid.UUID,
@@ -213,18 +248,27 @@ async def update_document(
     db: AsyncSession = Depends(get_db),
     user: User = Depends(get_current_user),
 ) -> DocumentOut:
-    """更新文档的文件夹与标签（不触发重新切分）。"""
+    """更新文档的文件夹/标签/可见性（不触发重新切分）。
+
+    owner 可改全部字段；admin 对他人的 team 文档仅可改 visibility（取消共享）；
+    他人私有文档一律 404（不泄露存在性）。
+    """
     document = (
-        await db.execute(
-            select(Document).where(Document.id == document_id, Document.user_id == user.id)
-        )
+        await db.execute(select(Document).where(Document.id == document_id))
     ).scalar_one_or_none()
     if document is None:
         raise not_found("文档")
+    if document.user_id != user.id:
+        if not (user.role == "admin" and document.visibility == "team"):
+            raise not_found("文档")
+        if set(body.model_dump(exclude_unset=True)) - {"visibility"}:
+            raise AppError("FORBIDDEN", "管理员仅可修改团队空间文档的 visibility", 403)
     if body.folder is not None:
         document.folder = body.folder.strip()[:128]
     if body.tags is not None:
         document.tags = [t.strip() for t in body.tags if t.strip()][:20]
+    if body.visibility is not None:
+        document.visibility = body.visibility
     await db.commit()
     await db.refresh(document)
     return _to_out(document)
@@ -267,11 +311,9 @@ async def get_document(
     user: User = Depends(get_current_user),
 ) -> DocumentOut:
     document = (
-        await db.execute(
-            select(Document).where(Document.id == document_id, Document.user_id == user.id)
-        )
+        await db.execute(select(Document).where(Document.id == document_id))
     ).scalar_one_or_none()
-    if document is None:
+    if document is None or not _can_read(document, user):
         raise not_found("文档")
     return _to_out(document)
 
@@ -400,13 +442,11 @@ async def get_document_file(
     db: AsyncSession = Depends(get_db),
     user: User = Depends(get_current_user),
 ) -> Response:
-    """取本人文档原始字节（预览用）：鉴权内联返回，不生成预签名 URL。"""
+    """取文档原始字节（预览用）：owner/admin/团队空间可读，鉴权内联返回，不生成预签名 URL。"""
     document = (
-        await db.execute(
-            select(Document).where(Document.id == document_id, Document.user_id == user.id)
-        )
+        await db.execute(select(Document).where(Document.id == document_id))
     ).scalar_one_or_none()
-    if document is None or not document.object_key:
+    if document is None or not document.object_key or not _can_read(document, user):
         raise not_found("文档")
     try:
         data = await get_object(document.object_key)
@@ -428,21 +468,21 @@ async def delete_document(
     db: AsyncSession = Depends(get_db),
     user: User = Depends(get_current_user),
 ) -> None:
-    """删除文档：连库删除切块（含 embedding），并清理 MinIO 中的原始文件。"""
+    """删除文档：连库删除切块（含 embedding），并清理 MinIO 中的原始文件。
+
+    owner 可删；admin 可删团队空间文档；他人私有文档 404。
+    """
     document = (
-        await db.execute(
-            select(Document).where(Document.id == document_id, Document.user_id == user.id)
-        )
+        await db.execute(select(Document).where(Document.id == document_id))
     ).scalar_one_or_none()
-    if document is None:
+    if document is None or not _can_write(document, user):
         raise not_found("文档")
 
-    # 取消该文档尚未完成的入库任务（best-effort：当前仓库尚无消费者，通常为空）
+    # 取消该文档尚未完成的入库任务（best-effort：按 payload 匹配，兼容 admin 删他人文档）
     stale_tasks = (
         await db.execute(
             select(Task).where(
                 Task.type == "ingest_document",
-                Task.user_id == user.id,
                 Task.status.in_(("pending", "running", "failed", "dead")),
             )
         )
@@ -469,17 +509,21 @@ async def get_chunk(
     db: AsyncSession = Depends(get_db),
     user: User = Depends(get_current_user),
 ) -> ChunkOut:
-    """引用回跳：按 chunk_id 返回原文块、所属文档与总块数（前端高亮定位用）。"""
+    """引用回跳：按 chunk_id 返回原文块、所属文档与总块数（前端高亮定位用）。
+
+    授权同文档读：owner/admin/团队空间文档（团队文档的引用需对非 owner 可用）。
+    """
     row = (
         await db.execute(
-            select(Chunk, Document.filename)
+            select(Chunk, Document)
             .join(Document, Chunk.document_id == Document.id)
-            .where(Chunk.id == chunk_id, Chunk.user_id == user.id)
+            .where(Chunk.id == chunk_id)
         )
     ).one_or_none()
-    if row is None:
+    if row is None or not _can_read(row[1], user):
         raise not_found("引用内容")
-    chunk, filename = row
+    chunk, document = row
+    filename = document.filename
     return ChunkOut(
         id=chunk.id,
         document_id=chunk.document_id,
