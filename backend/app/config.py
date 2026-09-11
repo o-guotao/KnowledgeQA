@@ -75,8 +75,11 @@ class Settings(BaseSettings):
     chunk_size: int = 512
     chunk_overlap: int = 64
     rag_top_k: int = 5
-    # 混合检索：向量 + 关键词（Postgres tsvector / SQLite LIKE）RRF 融合
+    # 混合检索：向量 + 关键词 RRF 融合
     hybrid_search_enabled: bool = True
+    # 关键词召回引擎：true=BM25（jieba+rank_bm25 内存索引，推荐）；
+    # false=数据库回退（Postgres tsvector / SQLite LIKE）
+    bm25_enabled: bool = True
     # 切分策略：window 滑动窗口 / semantic 语义分块（按 Markdown 标题层级，父子块）
     chunk_strategy: str = "window"  # window | semantic
 

@@ -1,7 +1,8 @@
 """RAG 召回：向量召回 + 关键词混合检索（RRF 融合）+ 可选重排序，按用户隔离。
 
-- postgresql：向量用 pgvector cosine_distance，关键词用 tsvector ts_rank
-- sqlite：向量用 Python 端余弦，关键词用 LIKE 简单匹配（开发降级，生产用 PG）
+- postgresql：向量用 pgvector cosine_distance；sqlite：向量用 Python 端余弦
+- 关键词：默认 BM25（app/services/bm25_index.py，jieba 分词 + Okapi）；
+  依赖缺失或 BM25_ENABLED=false 时回退 tsvector ts_rank（PG）/ LIKE（SQLite）
 - 混合检索（HYBRID_SEARCH_ENABLED）：RRF 融合两路召回，提升专有名词/编号的召回
 - 重排（RERANK_ENABLED）：cross-encoder 精排取 top_k
 """
@@ -117,10 +118,57 @@ def _keywords(query: str) -> list[str]:
     return [t for t in tokens if len(t) >= 2][:8]
 
 
+async def _bm25_recall(
+    db: AsyncSession, user_id: uuid.UUID, query_text: str, limit: int
+) -> list[RetrievedChunk] | None:
+    """BM25 召回：索引不可用返回 None（走数据库回退），无命中返回 []。"""
+    from app.services import bm25_index
+
+    hits = await bm25_index.search(db, user_id, query_text, limit)
+    if hits is None or not hits:
+        return hits
+    ids = [cid for cid, _ in hits]
+    score_of = dict(hits)
+    # 回填内容与文档名；再次按 user/status 过滤（SQL 侧兜底权限，索引内过滤为性能优化）
+    rows = (
+        await db.execute(
+            select(Chunk, Document.filename)
+            .join(Document, Chunk.document_id == Document.id)
+            .where(
+                Chunk.id.in_(ids),
+                Chunk.user_id == user_id,
+                Document.status == "ready",
+                Chunk.block_type == "child",
+            )
+        )
+    ).all()
+    by_id = {c.id: (c, fn) for c, fn in rows}
+    return [
+        RetrievedChunk(cid, by_id[cid][0].document_id, by_id[cid][1], by_id[cid][0].content, score_of[cid])
+        for cid in ids
+        if cid in by_id
+    ]
+
+
 async def _keyword_recall(
     db: AsyncSession, user_id: uuid.UUID, query_text: str, limit: int
 ) -> list[RetrievedChunk]:
-    """关键词召回。Postgres 用 tsvector 全文检索；SQLite 用 LIKE 退化匹配。"""
+    """关键词召回：默认 BM25；不可用/异常时回退 tsvector（PG）/ LIKE（SQLite）。"""
+    settings = get_settings()
+    if settings.bm25_enabled:
+        try:
+            results = await _bm25_recall(db, user_id, query_text, limit)
+            if results is not None:
+                return results
+        except Exception as exc:
+            logger.warning("bm25 recall degraded: %s", exc, extra={"event": "bm25_recall_degraded"})
+    return await _keyword_recall_db(db, user_id, query_text, limit)
+
+
+async def _keyword_recall_db(
+    db: AsyncSession, user_id: uuid.UUID, query_text: str, limit: int
+) -> list[RetrievedChunk]:
+    """数据库关键词召回（回退路径）。Postgres 用 tsvector 全文检索；SQLite 用 LIKE 退化匹配。"""
     settings = get_settings()
     kws = _keywords(query_text)
     if not kws:

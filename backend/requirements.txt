@@ -81,3 +81,11 @@ jieba~=0.42.1
 # LLM 调用链路追踪/观测
 # 使用位置：app/services/langfuse_tracing.py（懒加载 Langfuse）
 langfuse~=2.60.0
+
+# 中文分词（BM25 关键词召回的 tokenizer）
+# 使用位置：app/services/bm25_index.py（jieba.lcut）
+jieba~=0.42.1
+
+# Okapi BM25 排序（混合检索关键词路的内存索引）
+# 使用位置：app/services/bm25_index.py（BM25Okapi），由 app/services/rag.py 关键词召回调用
+rank-bm25~=0.2.2
