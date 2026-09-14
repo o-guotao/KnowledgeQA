@@ -234,7 +234,7 @@ export default function EvalCenterTab() {
                     <tr
                       key={r.id}
                       className={`cursor-pointer border-t border-slate-100 ${selectedRunId === r.id ? "bg-brand/5" : "hover:bg-white/5"}`}
-                      onClick={() => r.status === "done" && setSelectedRunId(r.id)}
+                      onClick={() => setSelectedRunId(r.id)}
                     >
                       <td className="py-2 pr-1" onClick={(e) => e.stopPropagation()}>
                         <input
@@ -293,8 +293,20 @@ export default function EvalCenterTab() {
         </Card>
       )}
 
+      {/* 选中 run 的状态面板：failed 显示错误，pending/running 显示进度 */}
+      {detail && detail.run.status === "failed" && (
+        <div role="status" className="rounded-lg border border-red-200 bg-red-50 px-4 py-3 text-sm text-red-700">
+          「{detail.run.name}」运行失败：{detail.run.error ?? "未知错误"}
+        </div>
+      )}
+      {detail && (detail.run.status === "pending" || detail.run.status === "running") && (
+        <div role="status" className="rounded-lg border border-amber-200 bg-amber-50 px-4 py-3 text-sm text-amber-700">
+          「{detail.run.name}」正在{detail.run.status === "pending" ? "排队" : "运行"}中，完成后自动展示数据…
+        </div>
+      )}
+
       {/* 单 run 图表 */}
-      {detail && groups.length > 0 && (
+      {detail && detail.run.status === "done" && groups.length > 0 && (
         <div className="space-y-6">
         {groups.some((g) => groupAt(g).llm_error) && (
           <div role="status" className="rounded-lg border border-amber-200 bg-amber-50 px-4 py-3 text-sm text-amber-700">
