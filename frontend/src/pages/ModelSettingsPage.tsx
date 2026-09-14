@@ -1,14 +1,24 @@
-import { ArrowLeft, CheckCircle2, Loader2, Pencil, Plus, Save, Settings2, Trash2, Wifi, X } from "lucide-react";
-import { useCallback, useEffect, useState } from "react";
+import { ArrowLeft, CheckCircle2, KeyRound, Loader2, Pencil, Plus, Save, Settings2, Trash2, User, Wifi, X } from "lucide-react";
+import { useCallback, useState } from "react";
 import { useNavigate } from "react-router-dom";
 import { z } from "zod";
 
-import { del, get, patch, post } from "../api/client";
-import { ModelConfigSchema, ModelConfigTestResultSchema, type ModelConfig } from "../api/schemas";
+import { del, get, patch, post, withQuery } from "../api/client";
+import {
+  ModelConfigSchema,
+  ModelConfigTestResultSchema,
+  pageSchema,
+  type ModelConfig,
+} from "../api/schemas";
+import { useAuth } from "../auth/AuthContext";
 import { ThemeToggle } from "../components/ThemeToggle";
+import { Badge } from "../components/ui/badge";
 import { Button } from "../components/ui/button";
 import { Card, CardContent, CardHeader, CardTitle } from "../components/ui/card";
 import { Input } from "../components/ui/input";
+import { Pagination } from "../components/ui/pagination";
+import { SearchInput } from "../components/ui/search-input";
+import { usePaginatedQuery } from "../hooks/usePaginatedQuery";
 
 type Draft = {
   name: string; base_url: string; model_name: string; api_key: string; timeout_seconds: string;
@@ -38,19 +48,49 @@ function payload(draft: Draft) {
 
 export function ModelSettingsPage() {
   const navigate = useNavigate();
-  const [configs, setConfigs] = useState<ModelConfig[]>([]);
+  const { user } = useAuth();
   const [draft, setDraft] = useState<Draft>(emptyDraft);
   const [saving, setSaving] = useState(false);
   const [editingId, setEditingId] = useState<string | null>(null);
   const [message, setMessage] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);
+  const [pwd, setPwd] = useState({ current: "", next: "", confirm: "" });
+  const [pwdSaving, setPwdSaving] = useState(false);
 
-  const refresh = useCallback(() => {
-    get("/model-configs", z.array(ModelConfigSchema)).then(setConfigs).catch((err) => setError(err instanceof Error ? err.message : "无法加载模型配置"));
-  }, []);
-  useEffect(() => { refresh(); }, [refresh]);
+  const configsQuery = usePaginatedQuery<ModelConfig>(
+    useCallback((params) => get(withQuery("/model-configs", params), pageSchema(ModelConfigSchema)), []),
+    { pageSize: 10 },
+  );
+  const configs = configsQuery.items;
+  const refresh = configsQuery.refresh;
 
   const update = <K extends keyof Draft>(field: K, value: Draft[K]) => setDraft((current) => ({ ...current, [field]: value }));
+
+  /** 修改密码：一致性/长度在前端即时反馈，当前密码正确性由后端权威校验。 */
+  const changePassword = async () => {
+    if (pwd.next !== pwd.confirm) {
+      setError("两次输入的新密码不一致");
+      setMessage(null);
+      return;
+    }
+    if (pwd.next.length < 8) {
+      setError("新密码至少 8 位");
+      setMessage(null);
+      return;
+    }
+    setPwdSaving(true);
+    setError(null);
+    setMessage(null);
+    try {
+      await post("/auth/change-password", { current_password: pwd.current, new_password: pwd.next }, z.unknown());
+      setMessage("密码已修改");
+      setPwd({ current: "", next: "", confirm: "" });
+    } catch (err) {
+      setError(err instanceof Error ? err.message : "修改密码失败");
+    } finally {
+      setPwdSaving(false);
+    }
+  };
 
   const save = async () => {
     setSaving(true); setError(null); setMessage(null);
@@ -102,6 +142,40 @@ export function ModelSettingsPage() {
         </header>
         <p className="max-w-3xl text-sm leading-6 text-theme-sub">每个配置使用 OpenAI Chat Completions 兼容接口。API Key 仅在保存时提交、由服务端加密，之后只显示脱敏值。</p>
         {(message || error) && <div role="status" className={`rounded-lg border px-4 py-3 text-sm ${error ? "border-red-200 bg-red-50 text-red-700" : "border-emerald-200 bg-emerald-50 text-emerald-700"}`}>{error ?? message}</div>}
+
+        <Card>
+          <CardHeader><CardTitle className="flex items-center gap-2"><User size={18} />账号信息</CardTitle></CardHeader>
+          <CardContent className="space-y-5">
+            <div className="flex flex-wrap items-center gap-x-10 gap-y-3 text-sm">
+              <div>
+                <p className="text-xs text-theme-sub">用户名</p>
+                <p className="mt-1 font-medium text-theme-text">{user?.username}</p>
+              </div>
+              <div>
+                <p className="text-xs text-theme-sub">显示名</p>
+                <p className="mt-1 font-medium text-theme-text">{user?.display_name || "—"}</p>
+              </div>
+              <div>
+                <p className="text-xs text-theme-sub">角色</p>
+                <div className="mt-1"><Badge variant={user?.role === "admin" ? "default" : "muted"}>{user?.role}</Badge></div>
+              </div>
+            </div>
+            <div className="border-t border-theme-line pt-5">
+              <p className="mb-3 flex items-center gap-2 text-sm font-medium"><KeyRound size={15} />修改密码</p>
+              <div className="grid gap-4 sm:grid-cols-3">
+                <label className="space-y-1.5 text-sm font-medium">当前密码<Input type="password" autoComplete="current-password" value={pwd.current} onChange={(e) => setPwd({ ...pwd, current: e.target.value })} /></label>
+                <label className="space-y-1.5 text-sm font-medium">新密码（至少 8 位）<Input type="password" autoComplete="new-password" value={pwd.next} onChange={(e) => setPwd({ ...pwd, next: e.target.value })} /></label>
+                <label className="space-y-1.5 text-sm font-medium">确认新密码<Input type="password" autoComplete="new-password" value={pwd.confirm} onChange={(e) => setPwd({ ...pwd, confirm: e.target.value })} /></label>
+              </div>
+              <div className="mt-4">
+                <Button disabled={pwdSaving || !pwd.current || !pwd.next || !pwd.confirm} onClick={() => void changePassword()}>
+                  {pwdSaving ? <Loader2 className="animate-spin" size={16} /> : <KeyRound size={16} />}
+                  {pwdSaving ? "提交中…" : "修改密码"}
+                </Button>
+              </div>
+            </div>
+          </CardContent>
+        </Card>
         <Card>
           <CardHeader><CardTitle className="flex items-center gap-2">{editingId ? <Pencil size={18} /> : <Plus size={18} />}{editingId ? "编辑模型配置" : "添加模型配置"}</CardTitle></CardHeader>
           <CardContent className="grid gap-4 sm:grid-cols-2">
@@ -118,13 +192,19 @@ export function ModelSettingsPage() {
             <div className="flex gap-2 sm:col-span-2"><Button disabled={saving || !draft.name || !draft.base_url || !draft.model_name || (!editingId && !draft.api_key)} onClick={() => void save()}>{saving ? <Loader2 className="animate-spin" size={16} /> : <Save size={16} />}{saving ? "保存中…" : editingId ? "保存修改" : "加密保存配置"}</Button>{editingId && <Button variant="ghost" onClick={() => { setEditingId(null); setDraft(emptyDraft()); }}><X size={16} />取消编辑</Button>}</div>
           </CardContent>
         </Card>
-        <section className="space-y-3"><h2 className="text-lg font-semibold">已保存的配置</h2>
-          {configs.length === 0 ? <Card><CardContent className="flex flex-col items-center gap-2 py-10 text-center"><Settings2 size={22} className="text-theme-sub" /><p className="text-sm text-theme-sub">尚未配置模型。添加并保存后即可用于问答。</p></CardContent></Card> : configs.map((config) => (
+        <section className="space-y-3">
+          <div className="flex flex-wrap items-center justify-between gap-3">
+            <h2 className="text-lg font-semibold">已保存的配置</h2>
+            <SearchInput value={configsQuery.query} onChange={configsQuery.setQuery} placeholder="搜索配置名 / 模型名 / 地址" ariaLabel="搜索模型配置" className="w-full sm:w-72" />
+          </div>
+          {configsQuery.error && <p className="text-sm text-red-400">{configsQuery.error}</p>}
+          {configs.length === 0 ? <Card><CardContent className="flex flex-col items-center gap-2 py-10 text-center"><Settings2 size={22} className="text-theme-sub" /><p className="text-sm text-theme-sub">{configsQuery.query !== "" ? `没有匹配「${configsQuery.query}」的配置` : "尚未配置模型。添加并保存后即可用于问答。"}</p></CardContent></Card> : configs.map((config) => (
             <Card key={config.id} className={config.is_active ? "border-brand/40 ring-1 ring-brand/10" : ""}><CardContent className="flex flex-col gap-4 py-5 sm:flex-row sm:items-center sm:justify-between">
               <div><div className="flex items-center gap-2 font-medium text-theme-text">{config.name}{config.is_active && <span className="inline-flex items-center gap-1 rounded-full bg-brand/10 px-2 py-0.5 text-xs text-brand"><CheckCircle2 size={12} />当前使用</span>}</div><p className="mt-1 text-sm text-theme-sub">{config.model_name} · {config.base_url}</p>{(config.temperature !== null || config.top_p !== null || config.max_tokens !== null) && <p className="mt-1 text-xs text-slate-400">温度 {config.temperature ?? "默认"} · top_p {config.top_p ?? "默认"} · max_tokens {config.max_tokens ?? "默认"}</p>}<p className="mt-1 font-mono text-xs text-slate-400">{config.api_key_masked}</p></div>
               <div className="flex flex-wrap gap-2"><Button size="sm" variant="outline" onClick={() => void test(config.id)}><Wifi size={14} />测试</Button><Button size="sm" variant="outline" onClick={() => edit(config)}><Pencil size={14} />编辑</Button>{!config.is_active && <Button size="sm" onClick={() => void activate(config.id)}>设为当前</Button>}<Button size="sm" variant="ghost" className="text-red-600 hover:bg-red-50 hover:text-red-700" aria-label={`删除 ${config.name}`} onClick={() => void remove(config.id)}><Trash2 size={15} /></Button></div>
             </CardContent></Card>
           ))}
+          <Pagination page={configsQuery.page} pages={configsQuery.pages} total={configsQuery.total} onPageChange={configsQuery.setPage} disabled={configsQuery.loading} />
         </section>
       </div>
     </main>
