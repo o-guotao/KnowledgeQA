@@ -91,13 +91,13 @@ export default function EvalCenterTab() {
     return () => clearInterval(timer);
   }, [activeCount, refresh]);
 
-  // 默认选中最近完成的 run 看详情
+  // 详情跟随：最新完成的 run 出现时自动切换（新 run 跑完即展示其数据；手动点选在两次完成之间保持）
   const doneRuns = useMemo(() => runs.filter((r) => r.status === "done"), [runs]);
   const [selectedRunId, setSelectedRunId] = useState<string | null>(null);
+  const latestDoneId = doneRuns[0]?.id;
   useEffect(() => {
-    const first = doneRuns[0];
-    if (!selectedRunId && first) setSelectedRunId(first.id);
-  }, [doneRuns, selectedRunId]);
+    if (latestDoneId) setSelectedRunId(latestDoneId);
+  }, [latestDoneId]);
   useEffect(() => {
     if (!selectedRunId) { setDetail(null); return; }
     get(`/admin/eval/runs/${selectedRunId}`, EvalRunDetailSchema).then(setDetail).catch(() => setDetail(null));
