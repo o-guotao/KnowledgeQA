@@ -148,6 +148,8 @@ async def create_run(
         "with_llm": body.with_llm,
         "chunk_size": body.chunk_size,
         "chunk_overlap": body.chunk_overlap,
+        # with_llm 的 provider 解析用创建者的模型设置（与日常问答同源）
+        "user_id": str(user.id),
     }
     run = EvalRun(
         dataset_id=dataset.id,

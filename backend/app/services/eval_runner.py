@@ -142,9 +142,9 @@ async def _build_kb(factory: async_sessionmaker, user_id: uuid.UUID) -> int:
     return len(all_chunks)
 
 
-async def _gen_answer(question: str, chunks: list) -> str:
-    """with_llm：线上同款 prompt 非流式生成（聚合 stream_chat 流）。"""
-    from app.services.deepseek import stream_chat
+async def _gen_answer(provider, question: str, chunks: list) -> str:
+    """with_llm：线上同款 prompt 非流式生成（聚合流），provider 与日常问答同源（模型设置）。"""
+    from app.services.openai_compatible import stream_chat
     from app.services.rag import RAG_SYSTEM_PROMPT, build_rag_user_content
 
     messages = [
@@ -152,7 +152,7 @@ async def _gen_answer(question: str, chunks: list) -> str:
         {"role": "user", "content": build_rag_user_content(question, chunks[:5])},
     ]
     answer = ""
-    async for _kind, _payload, result in stream_chat(messages):
+    async for _kind, _payload, result in stream_chat(provider, messages):
         pass
     answer = result.content
     return answer
@@ -166,6 +166,7 @@ async def _run_group(
     top_k_max: int,
     with_llm: bool,
     llm_available: bool,
+    provider=None,
 ) -> tuple[dict, list[dict]]:
     """跑一组配置：逐题 retrieve(top_k_max) + 截断算 recall@K + MRR + 分阶段计时。"""
     from app.services.rag import retrieve
@@ -205,7 +206,7 @@ async def _run_group(
         if with_llm and llm_available:
             try:
                 t0 = time.perf_counter()
-                answer = await _gen_answer(q, chunks)
+                answer = await _gen_answer(provider, q, chunks)
             except Exception as exc:
                 # key 无效/超时/限流：本组后续题降级不再调用（401 等大概率全局性），
                 # 整组标记 llm_error，不让单点失败搞挂整个 run
@@ -271,10 +272,19 @@ async def run_eval_run(run_id: uuid.UUID) -> None:
         with_llm = bool(cfg.get("with_llm"))
         groups = [g for g in (cfg.get("groups") or ALL_GROUPS) if g in GROUP_DEFS] or ALL_GROUPS
 
-        # with_llm 但无 key：整 run 降级（不逐题报错）
-        llm_available = with_llm and bool(get_settings().deepseek_api_key)
-        if with_llm and not llm_available:
-            logger.warning("eval run %s: with_llm 但无 DEEPSEEK_API_KEY，跳过答案评测", run_id)
+        # with_llm：provider 与日常问答同源（创建者的模型设置 → 全局 DeepSeek 兜底）；
+        # 解析失败整 run 降级（不逐题报错）
+        provider = None
+        if with_llm:
+            from app.services.model_configs import resolve_provider_config
+
+            try:
+                creator = uuid.UUID(cfg["user_id"]) if cfg.get("user_id") else uuid.UUID(int=0)
+                async with SessionLocal() as db:
+                    provider = await resolve_provider_config(db, creator)
+            except Exception as exc:
+                logger.warning("eval run %s: provider 解析失败，跳过答案评测：%s", run_id, exc)
+        llm_available = with_llm and provider is not None
 
         # chunk 参数 env 在建库阶段生效（与配置组无关，run 级快照）
         with _group_env(False, False, False, cfg):
@@ -291,7 +301,7 @@ async def run_eval_run(run_id: uuid.UUID) -> None:
                 hybrid, bm25, rerank = GROUP_DEFS[tag]
                 with _group_env(hybrid, bm25, rerank, cfg):
                     group_summary, group_items = await _run_group(
-                        factory, user_id, tag, questions, top_k_max, with_llm, llm_available
+                        factory, user_id, tag, questions, top_k_max, with_llm, llm_available, provider
                     )
                 summary[tag] = group_summary
                 for i, entry in enumerate(group_items, 1):

@@ -311,7 +311,7 @@ export default function EvalCenterTab() {
         {groups.some((g) => groupAt(g).llm_error) && (
           <div role="status" className="rounded-lg border border-amber-200 bg-amber-50 px-4 py-3 text-sm text-amber-700">
             LLM 答案评测已降级：{groups.map((g) => groupAt(g).llm_error).find(Boolean)}
-            （召回指标不受影响；请检查 DEEPSEEK_API_KEY 后重发）
+            （召回指标不受影响；请检查「模型设置」中的 key 或 DEEPSEEK_API_KEY 后重发）
           </div>
         )}
         <div className="grid gap-6 lg:grid-cols-2">
