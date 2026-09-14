@@ -61,7 +61,18 @@ CREATE UNIQUE INDEX ix_documents_user_content_hash
 
 ## Other endpoints
 
-- `GET /documents` — owner list, newest first.
+- `GET /documents` — owner list. Paged envelope (`Page[DocumentOut]`), `folder` exact filter
+  (unchanged), plus `q` matching `filename` **or** `tags` (via `json_text_search`, see
+  `list-pagination.md`), sorted `folder ↑, created_at ↓, id ↓`. The `id` tiebreaker is
+  required — batch uploads share a `created_at` second and paging would otherwise repeat or
+  skip rows.
+- `GET /documents/stats` — `DocumentStats` counters for the list header chips
+  (`total/ready/processing/failed/no_text`), computed with one `GROUP BY status`. Global
+  scope: deliberately ignores `q`/`folder` (the filtered count is the envelope's `total`).
+  `processing` = `uploaded + processing`. `stale` is **not** here — it needs the per-doc
+  settings comparison in `doc_sync.stale_reasons`, so it stays a per-row badge.
+  Must stay declared before `/documents/{document_id}`.
+- `GET /documents/folders` — folder names for the filter chips; deliberately **not** paged.
 - `GET /documents/{id}` — owner fetch.
 - `GET /chunks/{chunk_id}` — citation jump: returns chunk text + owning doc name + total chunk count.
 - `DELETE /documents/{id}` — 204. Cancels stale `ingest_document` tasks for that doc, deletes the
@@ -84,8 +95,10 @@ CREATE UNIQUE INDEX ix_documents_user_content_hash
   `GET /chunks/{chunk_id}`.
 - Write authorization (`_can_write`): owner; admin only for team docs (unshare/delete). `PATCH` with
   non-visibility fields by a non-owner admin → 403 `FORBIDDEN`.
-- `GET /documents/team` (declared BEFORE `/documents/{document_id}`): all team docs joined with
-  owner `display_name` → `owner_name`; any logged-in user.
+- `GET /documents/team` (declared BEFORE `/documents/{document_id}`): team docs joined with
+  owner `display_name` → `owner_name`; any logged-in user. Paged envelope; `q` matches
+  `filename`, `tags` or the owner's `display_name` ("find docs shared by X"). The count runs
+  through the same join subquery, so `total` always matches the filtered rows.
 - Retrieval visibility is one predicate: `(Chunk.user_id == :uid) OR (Document.visibility == 'team')`
   (always AND `status == 'ready'`), applied uniformly in vector recall (pg + sqlite), keyword DB
   recall (tsvector + LIKE), and BM25 (`team_flags` in the in-memory index).

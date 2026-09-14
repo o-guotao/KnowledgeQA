@@ -1,0 +1,7 @@
+{"file": ".trellis/spec/backend/documents-api.md", "reason": "文档上传/列表接口的既有约定（no_text、content_hash 判重、可见性授权），本次要改其列表返回形状并新增 /documents/stats，必须先对齐既有契约"}
+{"file": ".trellis/spec/backend/eval-center.md", "reason": "评测中心数据集/运行接口约定，runs 列表 100 条硬上限与页面轮询逻辑都在此，改造需保持其语义"}
+{"file": ".trellis/spec/frontend/state-management.md", "reason": "聊天页「乐观流式消息 vs 历史重载」竞态守卫（turnSessionRef）——历史消息分页必须遵守，否则会引入首答不渲染的回归"}
+{"file": ".trellis/spec/frontend/type-safety.md", "reason": "前端 zod schema 与类型推导约定，新增 pageSchema 工厂与 PageResult 类型需遵循"}
+{"file": ".trellis/spec/frontend/component-guidelines.md", "reason": "新增 SearchInput / Pagination 共享组件的 props 与主题 token 约定"}
+{"file": ".trellis/spec/guides/code-reuse-thinking-guide.md", "reason": "避免每个列表页各写一套搜索/分页逻辑；要求抽成共享 hook 与组件，并有「改造后回头检查是否漏改」的清单"}
+{"file": ".trellis/spec/guides/cross-layer-thinking-guide.md", "reason": "本次是跨层契约变更（后端返回信封 → 前端所有调用点），需按跨层一致性方法逐点核对"}

@@ -41,9 +41,27 @@
 - `/admin/eval/online-stats?days=N` aggregates percentiles in Python (dialect-agnostic),
   never `percentile_cont` (sqlite compat).
 
+## List endpoints
+
+- `GET /admin/eval/datasets` — paged envelope; `q` on `name`, `source` filter.
+- `GET /admin/eval/runs` — paged envelope; `q` on `name`, `dataset_id` + `status` filters.
+  The old hard-coded `.limit(100)` is **gone**: it silently truncated history, and
+  `page_size` now controls the window (max 100 per page, more pages reachable).
+  Sort is `created_at desc, id desc`.
+- `/admin/eval/runs/{id}` returns the per-question `items` inline — one run is ≤500 rows, so
+  it is intentionally not paginated.
+
 ## Frontend
 
 - `AdminPage` third tab; `pages/admin/EvalCenterTab.tsx` loaded via `React.lazy`
   (keeps recharts out of the main bundle — verify split chunk in build output).
+- Datasets and runs lists use `usePaginatedQuery` (pageSize 10, matching the app-wide
+  default for admin lists) with search boxes.
 - Charts: direct value labels, solid/dashed line styles (not color-only), table
   fallback data below charts.
+- **Derived state stays page-1-safe**: `doneRuns[0]` / `latestDoneId` (chart + auto-follow
+  source) and `activeCount` (polling trigger) are computed from the *current page*.
+  That is sound because the `EVAL_RUN_BUSY` gate allows at most one in-flight run, so the
+  newest `done` run is always within the first two rows of page 1 (pageSize 20). Do not
+  shrink the runs page size below 2, and do not "optimize" this into a separate
+  latest-run request. The KPI card reads `total`, not `runs.length`.

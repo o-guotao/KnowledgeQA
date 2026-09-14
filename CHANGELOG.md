@@ -10,6 +10,36 @@
 - **CHANGELOG**：每次发版更新本文件（发版内容取自该迭代 commit 记录）
 - **数据库**：迁移脚本按版本演进，发版说明中标注所属版本；既有迁移保持 0001-0013 顺序编号不变（已部署环境禁止重排 revision）
 
+## [未发布]
+
+### 变更（破坏性）
+
+- **列表接口返回形状改为分页信封**：所有列表接口（`/documents`、`/documents/team`、
+  `/sessions`、`/sessions/{id}/messages`、`/model-configs`、`/admin/users`、
+  `/admin/usage/by-user`、`/admin/usage/by-model`、`/admin/eval/datasets`、
+  `/admin/eval/runs`、`/meta/changelog`）由裸数组改为
+  `{items,total,page,page_size,pages}`，并新增 `q`（关键词）+ `page` + `page_size` 参数。
+  前后端必须同版本部署；CDN 若缓存旧前端包，旧包调用新后端会报「响应数据格式异常」。
+  例外（有意保留裸数组/不分页）：`/documents/folders`、`/admin/usage/daily`、
+  `/admin/eval/runs/{id}` 的逐题明细、CSV 导出。
+
+### 新增
+
+- **全系统列表搜索与分页**：文档（我的/团队空间）、管理后台用户与用量表、评测中心数据集与运行记录、
+  会话侧栏、历史消息、模型配置、更新日志均支持服务端关键词搜索与服务端分页；
+  前端统一 `usePaginatedQuery` + `SearchInput` + `Pagination` 三件套。
+- **`GET /documents/stats`**：文档列表顶部计数（total/ready/processing/failed/no_text），
+  解决分页后「客户端全量统计」失真的问题。
+- **历史消息分页**：`/sessions/{id}/messages` 支持倒序分页（page=1 为最新一页），前端
+  「加载更早」向上累加，流式作答中禁用以免与乐观消息交叉。
+- **会话侧栏搜索 + 加载更多**：会话列表按标题搜索，分页累加而非页码。
+
+### 修复
+
+- `/admin/eval/runs` 移除硬编码 `.limit(100)`：此前评测运行超过 100 条会被静默截断。
+- 中文标签搜索失效：SQLite 下 `JSON` 列以 `ensure_ascii=True` 序列化（中文存为 `\uXXXX`），
+  导致 `tags` 关键词搜索永不命中；新增 `json_text_search` 同时匹配原文与转义形式，方言无关。
+
 ## [0.3.0] - 2026-09-14
 
 ### 新增
