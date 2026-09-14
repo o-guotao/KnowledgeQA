@@ -1,7 +1,9 @@
 /** 评测中心（Admin 第三 Tab）：数据集/评测运行管理 + 召回质量与线上延迟可视化。
+ * 选择模型：勾选 run（最多 2 个）驱动下方全部面板 —— 选 1 个看单 run 明细，
+ * 选 2 个进入对比模式（按组双系列柱状 + 同组跨 run K 曲线 + 逐题双列对比 + 指标表）。
  * recharts 静态引入本文件，由 AdminPage 经 React.lazy 动态加载（独立 chunk，不进主包）。
  */
-import { FlaskConical, Loader2, Play, Plus, RefreshCw, Trash2, Upload, X } from "lucide-react";
+import { FlaskConical, Loader2, Play, Plus, Trash2, Upload, X } from "lucide-react";
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import {
   Bar,
@@ -48,33 +50,39 @@ interface RankEntry {
 }
 
 const GROUP_COLORS = ["#94a3b8", "#6366f1", "#22c55e", "#f59e0b", "#ef4444", "#8b5cf6"];
+const RUN_COLORS = ["#6366f1", "#f59e0b"];
+const DEFAULT_CMP_GROUP = "hybrid_bm25_rerank";
 const pct = (v: number | undefined) => (v === undefined ? "-" : `${(v * 100).toFixed(1)}%`);
 const fmtMs = (v: number | null | undefined) => (v == null ? "-" : v >= 1000 ? `${(v / 1000).toFixed(2)}s` : `${Math.round(v)}ms`);
 
-// 状态：小圆点 + 文字（紧凑、不换行），不用大圆角 pill
+// 状态：小圆点 + 文字（紧凑、不换行）
 const STATUS_DOT: Record<string, { label: string; dot: string; text: string }> = {
   pending: { label: "排队中", dot: "bg-slate-400", text: "text-slate-500" },
   running: { label: "运行中", dot: "bg-amber-500", text: "text-amber-500" },
   done: { label: "完成", dot: "bg-emerald-500", text: "text-emerald-500" },
   failed: { label: "失败", dot: "bg-red-500", text: "text-red-400" },
 };
-// 配置组紧凑缩写（全名放 title）
 const GROUP_SHORT: Record<string, string> = {
   baseline: "base",
   hybrid: "hybrid",
   hybrid_bm25: "bm25",
   hybrid_bm25_rerank: "rerank",
 };
+const runLabel = (name: string) => (name.length > 14 ? `${name.slice(0, 14)}…` : name);
 
 export default function EvalCenterTab() {
   const [datasets, setDatasets] = useState<EvalDataset[]>([]);
   const [runs, setRuns] = useState<EvalRun[]>([]);
   const [online, setOnline] = useState<OnlineStats | null>(null);
-  const [detail, setDetail] = useState<EvalRunDetail | null>(null);
-  const [compareIds, setCompareIds] = useState<string[]>([]);
-  const [compareRuns, setCompareRuns] = useState<EvalRunDetail[]>([]);
   const [showNewRun, setShowNewRun] = useState(false);
   const [error, setError] = useState<string | null>(null);
+
+  // 选择模型：勾选（≤2，驱动全部面板）；点行 = 单选
+  const [selectedIds, setSelectedIds] = useState<string[]>([]);
+  const [activeRunId, setActiveRunId] = useState<string | null>(null);
+  const [detail, setDetail] = useState<EvalRunDetail | null>(null);
+  const [compareRuns, setCompareRuns] = useState<EvalRunDetail[]>([]);
+  const [cmpGroup, setCmpGroup] = useState<string>(DEFAULT_CMP_GROUP);
 
   const refresh = useCallback(() => {
     get("/admin/eval/datasets", z.array(EvalDatasetSchema)).then(setDatasets).catch(() => {});
@@ -83,7 +91,7 @@ export default function EvalCenterTab() {
   }, []);
   useEffect(() => { refresh(); }, [refresh]);
 
-  // 运行中 run 5s 轮询（终态即停，复用文档页模式）
+  // 运行中 run 5s 轮询（终态即停）
   const activeCount = runs.filter((r) => r.status === "pending" || r.status === "running").length;
   useEffect(() => {
     if (activeCount === 0) return;
@@ -91,71 +99,126 @@ export default function EvalCenterTab() {
     return () => clearInterval(timer);
   }, [activeCount, refresh]);
 
-  // 详情跟随：最新完成的 run 出现时自动切换（新 run 跑完即展示其数据；手动点选在两次完成之间保持）
   const doneRuns = useMemo(() => runs.filter((r) => r.status === "done"), [runs]);
-  const [selectedRunId, setSelectedRunId] = useState<string | null>(null);
   const latestDoneId = doneRuns[0]?.id;
+  // 新 run 完成时，若用户未手动选择则自动跟随最新
   useEffect(() => {
-    if (latestDoneId) setSelectedRunId(latestDoneId);
-  }, [latestDoneId]);
-  useEffect(() => {
-    if (!selectedRunId) { setDetail(null); return; }
-    get(`/admin/eval/runs/${selectedRunId}`, EvalRunDetailSchema).then(setDetail).catch(() => setDetail(null));
-  }, [selectedRunId]);
+    if (latestDoneId && !activeRunId && selectedIds.length === 0) setActiveRunId(latestDoneId);
+  }, [latestDoneId, activeRunId, selectedIds.length]);
 
-  // 两 run 对比
-  const toggleCompare = (id: string) =>
-    setCompareIds((prev) => (prev.includes(id) ? prev.filter((x) => x !== id) : [...prev.slice(-1), id]));
+  // 视图模式：勾选优先（1=单 run，2=对比）；无勾选时看 activeRun（点行/自动最新）
+  const viewIds = selectedIds.length > 0 ? selectedIds : activeRunId ? [activeRunId] : [];
+  const compareMode = viewIds.length === 2;
+
   useEffect(() => {
-    if (compareIds.length !== 2) { setCompareRuns([]); return; }
-    Promise.all(compareIds.map((id) => get(`/admin/eval/runs/${id}`, EvalRunDetailSchema)))
+    if (compareMode) { setDetail(null); return; }
+    const id = viewIds[0];
+    if (!id) { setDetail(null); return; }
+    get(`/admin/eval/runs/${id}`, EvalRunDetailSchema).then(setDetail).catch(() => setDetail(null));
+  }, [viewIds.join(","), compareMode]); // eslint-disable-line react-hooks/exhaustive-deps
+
+  useEffect(() => {
+    if (!compareMode) { setCompareRuns([]); return; }
+    Promise.all(viewIds.map((id) => get(`/admin/eval/runs/${id}`, EvalRunDetailSchema)))
       .then(setCompareRuns)
       .catch(() => setCompareRuns([]));
-  }, [compareIds]);
+  }, [viewIds.join(","), compareMode]); // eslint-disable-line react-hooks/exhaustive-deps
 
+  const toggleSelect = (id: string) =>
+    setSelectedIds((prev) => {
+      if (prev.includes(id)) return prev.filter((x) => x !== id);
+      // 最多 2 个：超出时丢弃最早的，保留最新勾选
+      return [...prev, id].slice(-2);
+    });
+
+  // 对比模式下可选配置组：两 run 交集（无交集则并集）
+  const cmpGroups = useMemo(() => {
+    if (compareRuns.length !== 2) return [];
+    const [a, b] = compareRuns;
+    const ga = Object.keys(a?.run.summary ?? {});
+    const gb = Object.keys(b?.run.summary ?? {});
+    const common = ga.filter((g) => gb.includes(g));
+    return common.length > 0 ? common : Array.from(new Set([...ga, ...gb]));
+  }, [compareRuns]);
+  useEffect(() => {
+    if (cmpGroups.length === 0) return;
+    if (!cmpGroups.includes(cmpGroup)) setCmpGroup(cmpGroups.includes(DEFAULT_CMP_GROUP) ? DEFAULT_CMP_GROUP : cmpGroups[0]!);
+  }, [cmpGroups, cmpGroup]);
+
+  // ---- 数据派生 ----
   const summary = (detail?.run.summary ?? {}) as Record<string, GroupSummary>;
   const groups = Object.keys(summary);
+  const groupAt = (g: string): GroupSummary => summary[g] ?? { recall_at_k: {}, mrr: 0, latency_ms: {} };
 
-  // KPI：最近完成 run 的最佳组
   const latest = doneRuns[0];
   const latestSummary = (latest?.summary ?? {}) as Record<string, GroupSummary>;
   const bestRecall5 = Math.max(0, ...Object.values(latestSummary).map((g) => g.recall_at_k?.["5"] ?? 0));
   const bestMrr = Math.max(0, ...Object.values(latestSummary).map((g) => g.mrr ?? 0));
 
-  // 图表数据
-  const groupAt = (g: string): GroupSummary => summary[g] ?? { recall_at_k: {}, mrr: 0, latency_ms: {} };
-  const barData = groups.map((g, i) => ({
-    group: g,
-    "Recall@5": (groupAt(g).recall_at_k?.["5"] ?? 0) * 100,
-    MRR: groupAt(g).mrr * 100,
-    fill: GROUP_COLORS[i % GROUP_COLORS.length],
-  }));
-  const topkData = useMemo(() => {
-    if (groups.length === 0) return [];
-    const first = groups[0] ? groupAt(groups[0]) : undefined;
-    const ks = Object.keys(first?.recall_at_k ?? {}).map(Number).sort((a, b) => a - b);
-    return ks.map((k) => {
-      const point: Record<string, number> = { k };
-      for (const g of groups) point[g] = (groupAt(g).recall_at_k?.[String(k)] ?? 0) * 100;
-      return point;
-    });
-  }, [groups.join(","), detail]); // eslint-disable-line react-hooks/exhaustive-deps
-
-  const compareBarData = useMemo(() => {
-    if (compareRuns.length !== 2) return [];
-    const a = compareRuns[0];
-    const b = compareRuns[1];
+  // ① 配置对比柱状：单 run = 各组 Recall@5/MRR；对比 = 按组双 run 系列
+  const barData = useMemo(() => {
+    if (!compareMode) {
+      return groups.map((g) => ({
+        group: g,
+        "Recall@5": (groupAt(g).recall_at_k?.["5"] ?? 0) * 100,
+        MRR: groupAt(g).mrr * 100,
+      }));
+    }
+    const [a, b] = compareRuns;
     if (!a || !b) return [];
     const sa = a.run.summary as Record<string, GroupSummary>;
     const sb = b.run.summary as Record<string, GroupSummary>;
-    return Object.keys(sa).map((g) => ({
+    const allGroups = Array.from(new Set([...Object.keys(sa), ...Object.keys(sb)]));
+    return allGroups.map((g) => ({
       group: g,
-      [a.run.name.slice(0, 12)]: (sa[g]?.recall_at_k?.["5"] ?? 0) * 100,
-      [b.run.name.slice(0, 12)]: (sb[g]?.recall_at_k?.["5"] ?? 0) * 100,
+      [runLabel(a.run.name)]: (sa[g]?.recall_at_k?.["5"] ?? 0) * 100,
+      [runLabel(b.run.name)]: (sb[g]?.recall_at_k?.["5"] ?? 0) * 100,
     }));
-  }, [compareRuns]);
+  }, [compareMode, compareRuns, detail]); // eslint-disable-line react-hooks/exhaustive-deps
 
-  const removeRun = async (datasetId: string) => {
+  // ② Recall@K 曲线：单 run = 各组线；对比 = 选定组跨 run 双线
+  const topkData = useMemo(() => {
+    if (!compareMode) {
+      if (groups.length === 0) return [];
+      const ks = Object.keys(groupAt(groups[0]!).recall_at_k ?? {}).map(Number).sort((a, b) => a - b);
+      return ks.map((k) => {
+        const point: Record<string, number> = { k };
+        for (const g of groups) point[g] = (groupAt(g).recall_at_k?.[String(k)] ?? 0) * 100;
+        return point;
+      });
+    }
+    const [a, b] = compareRuns;
+    if (!a || !b) return [];
+    const sa = a.run.summary as Record<string, GroupSummary>;
+    const sb = b.run.summary as Record<string, GroupSummary>;
+    const ks = Object.keys(sa[cmpGroup]?.recall_at_k ?? sb[cmpGroup]?.recall_at_k ?? {})
+      .map(Number)
+      .sort((x, y) => x - y);
+    return ks.map((k) => ({
+      k,
+      [runLabel(a.run.name)]: (sa[cmpGroup]?.recall_at_k?.[String(k)] ?? 0) * 100,
+      [runLabel(b.run.name)]: (sb[cmpGroup]?.recall_at_k?.[String(k)] ?? 0) * 100,
+    }));
+  }, [compareMode, compareRuns, detail, cmpGroup]); // eslint-disable-line react-hooks/exhaustive-deps
+
+  // ④ 指标对比表（对比模式）：run × 组 的精确数值
+  const metricRows = useMemo(() => {
+    if (!compareMode) return [];
+    return compareRuns.flatMap((d) => {
+      const s = d.run.summary as Record<string, GroupSummary>;
+      return Object.keys(s).map((g) => ({
+        run: d.run.name,
+        group: g,
+        r1: s[g]?.recall_at_k?.["1"] ?? 0,
+        r5: s[g]?.recall_at_k?.["5"] ?? 0,
+        r10: s[g]?.recall_at_k?.["10"] ?? 0,
+        mrr: s[g]?.mrr ?? 0,
+        ans: s[g]?.answer_hit_rate,
+      }));
+    });
+  }, [compareMode, compareRuns]);
+
+  const removeDataset = async (datasetId: string) => {
     try {
       await del(`/admin/eval/datasets/${datasetId}`);
       refresh();
@@ -204,7 +267,7 @@ export default function EvalCenterTab() {
                     <td className="py-2 text-theme-sub">{d.source === "builtin" ? "内置" : "上传"}</td>
                     <td className="py-2 text-right">{d.item_count}</td>
                     <td className="py-2 text-right">
-                      <Button size="sm" variant="ghost" aria-label={`删除 ${d.name}`} onClick={() => void removeRun(d.id)}>
+                      <Button size="sm" variant="ghost" aria-label={`删除 ${d.name}`} onClick={() => void removeDataset(d.id)}>
                         <Trash2 size={14} />
                       </Button>
                     </td>
@@ -216,9 +279,9 @@ export default function EvalCenterTab() {
         </CardContent>
       </Card>
 
-      {/* 运行列表 */}
+      {/* 运行列表：勾选驱动下方面板 */}
       <Card>
-        <CardHeader><CardTitle>评测运行（勾选两个可对比）</CardTitle></CardHeader>
+        <CardHeader><CardTitle>评测运行（勾选 1 个看明细，勾选 2 个进入对比）</CardTitle></CardHeader>
         <CardContent>
           {runs.length === 0 ? (
             <p className="py-4 text-sm text-theme-sub">还没有评测运行。选择数据集后点击「运行新评测」。</p>
@@ -230,27 +293,26 @@ export default function EvalCenterTab() {
                   const st = STATUS_DOT[r.status] ?? { label: r.status, dot: "bg-slate-400", text: "text-slate-500" };
                   const groupList = (r.config as { groups?: string[] }).groups ?? [];
                   const gs = groupList.map((g) => GROUP_SHORT[g] ?? g).join("/");
+                  const isActive = selectedIds.length > 0 ? selectedIds.includes(r.id) : activeRunId === r.id;
                   return (
                     <tr
                       key={r.id}
-                      className={`cursor-pointer border-t border-slate-100 ${selectedRunId === r.id ? "bg-brand/5" : "hover:bg-white/5"}`}
-                      onClick={() => setSelectedRunId(r.id)}
+                      className={`cursor-pointer border-t border-slate-100 ${isActive ? "bg-brand/5" : "hover:bg-white/5"}`}
+                      onClick={() => { setSelectedIds([]); setActiveRunId(r.id); }}
                     >
                       <td className="py-2 pr-1" onClick={(e) => e.stopPropagation()}>
                         <input
                           type="checkbox"
                           className="accent-brand"
-                          aria-label={`对比 ${r.name}`}
-                          checked={compareIds.includes(r.id)}
+                          aria-label={`选择 ${r.name}`}
+                          checked={selectedIds.includes(r.id)}
                           disabled={r.status !== "done"}
-                          onChange={() => toggleCompare(r.id)}
+                          onChange={() => toggleSelect(r.id)}
                         />
                       </td>
                       <td className="max-w-0 py-2">
                         <p className="truncate" title={r.name}>{r.name}</p>
-                        {r.error && (
-                          <p className="max-w-72 truncate text-xs text-red-400" title={r.error}>{r.error}</p>
-                        )}
+                        {r.error && <p className="max-w-72 truncate text-xs text-red-400" title={r.error}>{r.error}</p>}
                       </td>
                       <td className="whitespace-nowrap py-2 pr-3">
                         <span className={`inline-flex items-center gap-1.5 text-xs ${st.text}`}>
@@ -272,51 +334,50 @@ export default function EvalCenterTab() {
         </CardContent>
       </Card>
 
-      {/* 两 run 对比 */}
-      {compareRuns.length === 2 && (
-        <Card>
-          <CardHeader><CardTitle>Recall@5 对比</CardTitle></CardHeader>
-          <CardContent className="h-72">
-            <ResponsiveContainer width="100%" height="100%">
-              <BarChart data={compareBarData}>
-                <CartesianGrid strokeDasharray="3 3" opacity={0.3} />
-                <XAxis dataKey="group" fontSize={12} />
-                <YAxis unit="%" fontSize={12} domain={[0, 100]} />
-                <Tooltip formatter={(v: unknown) => `${Number(v).toFixed(1)}%`} />
-                <Legend />
-                {Object.keys(compareBarData[0] ?? {}).filter((k) => k !== "group").map((k, i) => (
-                  <Bar key={k} dataKey={k} fill={i === 0 ? "#6366f1" : "#f59e0b"} label={{ position: "top", fontSize: 10, formatter: (v: unknown) => `${Number(v).toFixed(0)}` }} />
-                ))}
-              </BarChart>
-            </ResponsiveContainer>
-          </CardContent>
-        </Card>
-      )}
-
       {/* 选中 run 的状态面板：failed 显示错误，pending/running 显示进度 */}
-      {detail && detail.run.status === "failed" && (
+      {!compareMode && detail && detail.run.status === "failed" && (
         <div role="status" className="rounded-lg border border-red-200 bg-red-50 px-4 py-3 text-sm text-red-700">
           「{detail.run.name}」运行失败：{detail.run.error ?? "未知错误"}
         </div>
       )}
-      {detail && (detail.run.status === "pending" || detail.run.status === "running") && (
+      {!compareMode && detail && (detail.run.status === "pending" || detail.run.status === "running") && (
         <div role="status" className="rounded-lg border border-amber-200 bg-amber-50 px-4 py-3 text-sm text-amber-700">
           「{detail.run.name}」正在{detail.run.status === "pending" ? "排队" : "运行"}中，完成后自动展示数据…
         </div>
       )}
+      {!compareMode && detail && detail.run.status === "done" && groups.some((g) => groupAt(g).llm_error) && (
+        <div role="status" className="rounded-lg border border-amber-200 bg-amber-50 px-4 py-3 text-sm text-amber-700">
+          LLM 答案评测已降级：{groups.map((g) => groupAt(g).llm_error).find(Boolean)}
+          （召回指标不受影响；请检查「模型设置」中的 key 或 DEEPSEEK_API_KEY 后重发）
+        </div>
+      )}
+      {compareMode && (
+        <div className="flex flex-wrap items-center gap-3 rounded-lg border border-theme-line bg-theme-card px-4 py-3 text-sm">
+          <span className="text-theme-sub">对比模式：</span>
+          <span className="font-medium text-theme-text">{compareRuns[0]?.run.name ?? "加载中…"}</span>
+          <span className="text-theme-sub">vs</span>
+          <span className="font-medium text-theme-text">{compareRuns[1]?.run.name ?? "加载中…"}</span>
+          <label className="ml-auto flex items-center gap-2 text-theme-sub">
+            对比配置组
+            <select
+              className="rounded-md border border-theme-line bg-theme-input px-2 py-1 text-sm"
+              value={cmpGroup}
+              onChange={(e) => setCmpGroup(e.target.value)}
+            >
+              {cmpGroups.map((g) => <option key={g} value={g}>{g}</option>)}
+            </select>
+          </label>
+          <Button size="sm" variant="ghost" onClick={() => setSelectedIds([])}><X size={14} />退出对比</Button>
+        </div>
+      )}
 
-      {/* 单 run 图表 */}
-      {detail && detail.run.status === "done" && groups.length > 0 && (
-        <div className="space-y-6">
-        {groups.some((g) => groupAt(g).llm_error) && (
-          <div role="status" className="rounded-lg border border-amber-200 bg-amber-50 px-4 py-3 text-sm text-amber-700">
-            LLM 答案评测已降级：{groups.map((g) => groupAt(g).llm_error).find(Boolean)}
-            （召回指标不受影响；请检查「模型设置」中的 key 或 DEEPSEEK_API_KEY 后重发）
-          </div>
-        )}
+      {/* 图表区：① 配置对比 + ② Recall@K 曲线 */}
+      {((!compareMode && detail?.run.status === "done" && groups.length > 0) || (compareMode && compareRuns.length === 2)) && (
         <div className="grid gap-6 lg:grid-cols-2">
           <Card>
-            <CardHeader><CardTitle>配置组对比 · {detail.run.name}</CardTitle></CardHeader>
+            <CardHeader>
+              <CardTitle>{compareMode ? "配置组对比（Recall@5，双 run）" : `配置组对比 · ${detail?.run.name ?? ""}`}</CardTitle>
+            </CardHeader>
             <CardContent className="h-72">
               <ResponsiveContainer width="100%" height="100%">
                 <BarChart data={barData}>
@@ -325,14 +386,25 @@ export default function EvalCenterTab() {
                   <YAxis unit="%" fontSize={12} domain={[0, 100]} />
                   <Tooltip formatter={(v: unknown) => `${Number(v).toFixed(1)}%`} />
                   <Legend />
-                  <Bar dataKey="Recall@5" fill="#6366f1" label={{ position: "top", fontSize: 10, formatter: (v: unknown) => `${Number(v).toFixed(0)}` }} />
-                  <Bar dataKey="MRR" fill="#22c55e" label={{ position: "top", fontSize: 10, formatter: (v: unknown) => `${Number(v).toFixed(0)}` }} />
+                  {compareMode ? (
+                    barData.length > 0 &&
+                    Object.keys(barData[0]!).filter((k) => k !== "group").map((k, i) => (
+                      <Bar key={k} dataKey={k} fill={RUN_COLORS[i % RUN_COLORS.length]} label={{ position: "top", fontSize: 10, formatter: (v: unknown) => `${Number(v).toFixed(0)}` }} />
+                    ))
+                  ) : (
+                    <>
+                      <Bar dataKey="Recall@5" fill="#6366f1" label={{ position: "top", fontSize: 10, formatter: (v: unknown) => `${Number(v).toFixed(0)}` }} />
+                      <Bar dataKey="MRR" fill="#22c55e" label={{ position: "top", fontSize: 10, formatter: (v: unknown) => `${Number(v).toFixed(0)}` }} />
+                    </>
+                  )}
                 </BarChart>
               </ResponsiveContainer>
             </CardContent>
           </Card>
           <Card>
-            <CardHeader><CardTitle>Recall@K 曲线</CardTitle></CardHeader>
+            <CardHeader>
+              <CardTitle>{compareMode ? `Recall@K 曲线（同组：${cmpGroup}）` : "Recall@K 曲线"}</CardTitle>
+            </CardHeader>
             <CardContent className="h-72">
               <ResponsiveContainer width="100%" height="100%">
                 <LineChart data={topkData}>
@@ -341,12 +413,12 @@ export default function EvalCenterTab() {
                   <YAxis unit="%" fontSize={12} domain={[0, 100]} />
                   <Tooltip formatter={(v: unknown) => `${Number(v).toFixed(1)}%`} />
                   <Legend />
-                  {groups.map((g, i) => (
+                  {(compareMode ? Object.keys(topkData[0] ?? {}).filter((k) => k !== "k") : groups).map((key, i) => (
                     <Line
-                      key={g}
-                      dataKey={g}
-                      stroke={GROUP_COLORS[i % GROUP_COLORS.length]}
-                      strokeDasharray={i % 2 === 1 ? "6 3" : undefined}
+                      key={key}
+                      dataKey={key}
+                      stroke={compareMode ? RUN_COLORS[i % RUN_COLORS.length] : GROUP_COLORS[i % GROUP_COLORS.length]}
+                      strokeDasharray={!compareMode && i % 2 === 1 ? "6 3" : undefined}
                       strokeWidth={2}
                       dot={{ r: 2 }}
                     />
@@ -356,11 +428,42 @@ export default function EvalCenterTab() {
             </CardContent>
           </Card>
         </div>
-        </div>
       )}
 
-      {/* 逐题明细 */}
-      {detail && detail.items.length > 0 && (
+      {/* ④ 指标对比表（对比模式的精确数值，替代原对比图） */}
+      {compareMode && metricRows.length > 0 && (
+        <Card>
+          <CardHeader><CardTitle>指标对比（精确数值）</CardTitle></CardHeader>
+          <CardContent className="overflow-x-auto p-0">
+            <table className="w-full text-sm">
+              <thead>
+                <tr className="border-b border-slate-100 text-left text-xs text-theme-sub">
+                  <th className="px-4 py-2">运行</th><th className="px-4 py-2">配置组</th>
+                  <th className="px-4 py-2 text-right">Recall@1</th><th className="px-4 py-2 text-right">Recall@5</th>
+                  <th className="px-4 py-2 text-right">Recall@10</th><th className="px-4 py-2 text-right">MRR</th>
+                  <th className="px-4 py-2 text-right">答案正确率</th>
+                </tr>
+              </thead>
+              <tbody>
+                {metricRows.map((row) => (
+                  <tr key={`${row.run}-${row.group}`} className="border-b border-slate-50 last:border-0">
+                    <td className="max-w-56 truncate px-4 py-2" title={row.run}>{row.run}</td>
+                    <td className="whitespace-nowrap px-4 py-2 font-mono text-xs">{row.group}</td>
+                    <td className="px-4 py-2 text-right">{pct(row.r1)}</td>
+                    <td className="px-4 py-2 text-right font-medium">{pct(row.r5)}</td>
+                    <td className="px-4 py-2 text-right">{pct(row.r10)}</td>
+                    <td className="px-4 py-2 text-right">{pct(row.mrr)}</td>
+                    <td className="px-4 py-2 text-right">{row.ans == null ? "-" : pct(row.ans)}</td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          </CardContent>
+        </Card>
+      )}
+
+      {/* ③ 逐题明细：单 run = 各组；对比 = 选定组跨 run 双列 + 变化 */}
+      {!compareMode && detail && detail.run.status === "done" && detail.items.length > 0 && (
         <Card>
           <CardHeader><CardTitle>逐题明细（rank 相对 baseline 变化）</CardTitle></CardHeader>
           <CardContent className="overflow-x-auto p-0">
@@ -386,11 +489,7 @@ export default function EvalCenterTab() {
                         const diff = g !== "baseline" && baseRank > 0 && e.rank > 0 ? baseRank - e.rank : 0;
                         return (
                           <td key={g} className="px-4 py-2 text-right">
-                            {e.hit ? (
-                              <span className="text-emerald-500">✓{e.rank}</span>
-                            ) : (
-                              <span className="text-red-400">✗</span>
-                            )}
+                            {e.hit ? <span className="text-emerald-500">✓{e.rank}</span> : <span className="text-red-400">✗</span>}
                             {diff > 0 && <span className="ml-1 text-xs text-emerald-500">↑{diff}</span>}
                             {diff < 0 && <span className="ml-1 text-xs text-red-400">↓{-diff}</span>}
                             {"answer_hit" in e && (
@@ -401,6 +500,50 @@ export default function EvalCenterTab() {
                           </td>
                         );
                       })}
+                    </tr>
+                  );
+                })}
+              </tbody>
+            </table>
+          </CardContent>
+        </Card>
+      )}
+
+      {compareMode && compareRuns.length === 2 && (compareRuns[0]?.items.length ?? 0) > 0 && (
+        <Card>
+          <CardHeader><CardTitle>逐题明细对比（配置组：{cmpGroup}）</CardTitle></CardHeader>
+          <CardContent className="overflow-x-auto p-0">
+            <table className="w-full text-sm">
+              <thead>
+                <tr className="border-b border-slate-100 text-left text-xs text-theme-sub">
+                  <th className="px-4 py-2">#</th><th className="px-4 py-2">问题</th><th className="px-4 py-2">gold_doc</th>
+                  <th className="px-4 py-2 text-right">{runLabel(compareRuns[0]!.run.name)}</th>
+                  <th className="px-4 py-2 text-right">{runLabel(compareRuns[1]!.run.name)}</th>
+                  <th className="px-4 py-2 text-right">变化</th>
+                </tr>
+              </thead>
+              <tbody>
+                {compareRuns[0]!.items.map((it, i) => {
+                  const other = compareRuns[1]!.items[i];
+                  const ra = (it.ranks as Record<string, RankEntry>)[cmpGroup];
+                  const rb = (other?.ranks as Record<string, RankEntry> | undefined)?.[cmpGroup];
+                  const diff = (ra?.rank ?? 0) > 0 && (rb?.rank ?? 0) > 0 ? (ra!.rank - rb!.rank) : 0;
+                  const cell = (e: RankEntry | undefined) =>
+                    !e ? <span className="text-theme-sub">-</span>
+                      : e.hit ? <span className="text-emerald-500">✓{e.rank}</span>
+                      : <span className="text-red-400">✗</span>;
+                  return (
+                    <tr key={it.id} className="border-b border-slate-50 last:border-0">
+                      <td className="px-4 py-2 text-theme-sub">{it.idx}</td>
+                      <td className="max-w-64 truncate px-4 py-2" title={it.question}>{it.question}</td>
+                      <td className="px-4 py-2 text-xs text-theme-sub">{it.gold_doc}</td>
+                      <td className="px-4 py-2 text-right">{cell(ra)}</td>
+                      <td className="px-4 py-2 text-right">{cell(rb)}</td>
+                      <td className="px-4 py-2 text-right">
+                        {diff > 0 && <span className="text-xs text-emerald-500">↑{diff}</span>}
+                        {diff < 0 && <span className="text-xs text-red-400">↓{-diff}</span>}
+                        {diff === 0 && <span className="text-xs text-theme-sub">-</span>}
+                      </td>
                     </tr>
                   );
                 })}
@@ -485,7 +628,7 @@ function ImportButtons({ onDone, onError }: { onDone: () => void; onError: (m: s
   );
 }
 
-/** 发起评测弹窗：数据集 + 配置组 + top_k + with_llm（含 token 成本提示） */
+/** 发起评测弹窗：数据集 + 语料模式 + 配置组 + top_k + with_llm（含 token 成本提示） */
 function NewRunDialog({ datasets, onClose, onCreated }: { datasets: EvalDataset[]; onClose: () => void; onCreated: () => void }) {
   const ALL = ["baseline", "hybrid", "hybrid_bm25", "hybrid_bm25_rerank"];
   const [datasetId, setDatasetId] = useState(datasets[0]?.id ?? "");
@@ -519,6 +662,18 @@ function NewRunDialog({ datasets, onClose, onCreated }: { datasets: EvalDataset[
               {datasets.map((d) => <option key={d.id} value={d.id}>{d.name}（{d.item_count} 题）</option>)}
             </select>
           </label>
+          <fieldset className="space-y-1.5 text-sm font-medium">评测语料
+            <div className="mt-1 space-y-1.5">
+              <label className="flex cursor-pointer items-start gap-2 text-sm font-normal">
+                <input type="radio" name="kb_mode" className="mt-1 accent-brand" checked={kbMode === "sample"} onChange={() => setKbMode("sample")} />
+                <span>内置样例语料（4 篇样例文档）<span className="block text-xs text-theme-sub">gold_doc 须为样例库文件名（员工手册.md 等）</span></span>
+              </label>
+              <label className="flex cursor-pointer items-start gap-2 text-sm font-normal">
+                <input type="radio" name="kb_mode" className="mt-1 accent-brand" checked={kbMode === "online"} onChange={() => setKbMode("online")} />
+                <span>我的线上知识库<span className="block text-xs text-theme-sub">gold_doc 匹配线上文档名，检索范围 = 我的文档 + 团队空间</span></span>
+              </label>
+            </div>
+          </fieldset>
           <fieldset className="space-y-1.5 text-sm font-medium">配置组
             <div className="mt-1 grid grid-cols-2 gap-2">
               {ALL.map((g) => (
@@ -532,18 +687,6 @@ function NewRunDialog({ datasets, onClose, onCreated }: { datasets: EvalDataset[
                   <span className="font-mono text-xs">{g}</span>
                 </label>
               ))}
-            </div>
-          </fieldset>
-          <fieldset className="space-y-1.5 text-sm font-medium">评测语料
-            <div className="mt-1 space-y-1.5">
-              <label className="flex cursor-pointer items-start gap-2 text-sm font-normal">
-                <input type="radio" name="kb_mode" className="mt-1 accent-brand" checked={kbMode === "sample"} onChange={() => setKbMode("sample")} />
-                <span>内置样例语料（4 篇样例文档）<span className="block text-xs text-theme-sub">gold_doc 须为样例库文件名（员工手册.md 等）</span></span>
-              </label>
-              <label className="flex cursor-pointer items-start gap-2 text-sm font-normal">
-                <input type="radio" name="kb_mode" className="mt-1 accent-brand" checked={kbMode === "online"} onChange={() => setKbMode("online")} />
-                <span>我的线上知识库<span className="block text-xs text-theme-sub">gold_doc 匹配线上文档名，检索范围 = 我的文档 + 团队空间</span></span>
-              </label>
             </div>
           </fieldset>
           <label className="block space-y-1.5 text-sm font-medium">top_k 上限（Recall@1..K）
