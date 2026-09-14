@@ -1,29 +1,41 @@
 import { ArrowLeft, History, Tag } from "lucide-react";
-import { useEffect, useState } from "react";
+import { useCallback, useEffect, useState } from "react";
 import { useNavigate } from "react-router-dom";
-import { z } from "zod";
 
-import { get } from "../api/client";
-import { ChangelogEntrySchema, VersionInfoSchema, type ChangelogEntry } from "../api/schemas";
+import { get, withQuery } from "../api/client";
+import {
+  ChangelogEntrySchema,
+  VersionInfoSchema,
+  pageSchema,
+  type ChangelogEntry,
+} from "../api/schemas";
 import { Badge } from "../components/ui/badge";
 import { Button } from "../components/ui/button";
 import { Card, CardContent } from "../components/ui/card";
+import { Pagination } from "../components/ui/pagination";
+import { SearchInput } from "../components/ui/search-input";
 import { ThemeToggle } from "../components/ThemeToggle";
+import { usePaginatedQuery } from "../hooks/usePaginatedQuery";
 
 /** 版本与迭代记录：数据来自后端 /api/meta/*（单一来源：根 VERSION 与 CHANGELOG.md）。 */
 export function ChangelogPage() {
   const navigate = useNavigate();
   const [version, setVersion] = useState<string>("");
-  const [entries, setEntries] = useState<ChangelogEntry[]>([]);
-  const [error, setError] = useState<string>("");
+
+  const entriesQuery = usePaginatedQuery<ChangelogEntry>(
+    useCallback(
+      (params) => get(withQuery("/meta/changelog", params), pageSchema(ChangelogEntrySchema)),
+      [],
+    ),
+    { pageSize: 5 },
+  );
+  const entries = entriesQuery.items;
+  const error = entriesQuery.error ?? "";
 
   useEffect(() => {
     get("/meta/version", VersionInfoSchema)
       .then((r) => setVersion(r.version))
       .catch(() => setVersion(""));
-    get("/meta/changelog", z.array(ChangelogEntrySchema))
-      .then(setEntries)
-      .catch((err) => setError(err instanceof Error ? err.message : "加载失败"));
   }, []);
 
   return (
@@ -50,12 +62,21 @@ export function ChangelogPage() {
           </div>
         </header>
 
+        <SearchInput
+          value={entriesQuery.query}
+          onChange={entriesQuery.setQuery}
+          placeholder="搜索版本号或条目内容"
+          ariaLabel="搜索更新日志"
+        />
+
         {error && <p className="text-sm text-red-400">{error}</p>}
 
         {!error && entries.length === 0 && (
           <div className="flex flex-col items-center rounded-2xl border border-dashed border-theme-line bg-theme-card/60 px-6 py-16 text-center">
             <History size={22} className="text-theme-sub" />
-            <p className="mt-4 text-sm text-theme-sub">暂无迭代记录</p>
+            <p className="mt-4 text-sm text-theme-sub">
+              {entriesQuery.query !== "" ? `没有匹配「${entriesQuery.query}」的版本记录` : "暂无迭代记录"}
+            </p>
           </div>
         )}
 
@@ -85,6 +106,14 @@ export function ChangelogPage() {
             </CardContent>
           </Card>
         ))}
+
+        <Pagination
+          page={entriesQuery.page}
+          pages={entriesQuery.pages}
+          total={entriesQuery.total}
+          onPageChange={entriesQuery.setPage}
+          disabled={entriesQuery.loading}
+        />
       </div>
     </main>
   );

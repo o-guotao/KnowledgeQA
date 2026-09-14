@@ -84,6 +84,23 @@ export async function get<T>(path: string, schema: z.ZodType<T, z.ZodTypeDef, un
   return request(path, schema);
 }
 
+/**
+ * 拼接查询串：跳过 undefined / null / 空串（空 q 视为不过滤）。
+ * 分页/搜索参数统一用它构造，避免各页面手写 `?a=${a}&b=${b}` 时漏掉空值判断。
+ */
+export function withQuery(
+  path: string,
+  params: Record<string, string | number | boolean | undefined | null>,
+): string {
+  const search = new URLSearchParams();
+  for (const [key, value] of Object.entries(params)) {
+    if (value === undefined || value === null || value === "") continue;
+    search.set(key, String(value));
+  }
+  const queryString = search.toString();
+  return queryString ? `${path}?${queryString}` : path;
+}
+
 export async function post<T>(
   path: string,
   body: unknown,

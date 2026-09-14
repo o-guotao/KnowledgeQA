@@ -3,8 +3,15 @@ import { useCallback, useEffect, useRef, useState } from "react";
 import { useNavigate } from "react-router-dom";
 import { z } from "zod";
 
-import { del, get, patch, post, postForm } from "../api/client";
-import { ContentUpdateResultSchema, DocumentSchema, type KnowledgeDocument } from "../api/schemas";
+import { del, get, patch, post, postForm, withQuery } from "../api/client";
+import {
+  ContentUpdateResultSchema,
+  DocumentSchema,
+  DocumentStatsSchema,
+  pageSchema,
+  type DocumentStats,
+  type KnowledgeDocument,
+} from "../api/schemas";
 import { useAuth } from "../auth/AuthContext";
 import { ConfirmDialog } from "../components/ConfirmDialog";
 import { DocumentPreviewModal } from "../components/DocumentPreviewModal";
@@ -12,6 +19,9 @@ import { ThemeToggle } from "../components/ThemeToggle";
 import { Badge } from "../components/ui/badge";
 import { Button } from "../components/ui/button";
 import { Card, CardContent } from "../components/ui/card";
+import { Pagination } from "../components/ui/pagination";
+import { SearchInput } from "../components/ui/search-input";
+import { usePaginatedQuery } from "../hooks/usePaginatedQuery";
 
 const STATUS_META: Record<KnowledgeDocument["status"], { label: string; variant: "muted" | "warning" | "success" | "destructive" }> = {
   uploaded: { label: "排队中", variant: "muted" },
@@ -77,8 +87,6 @@ export function DocumentsPage() {
   const navigate = useNavigate();
   const { user } = useAuth();
   const [tab, setTab] = useState<"mine" | "team">("mine");
-  const [docs, setDocs] = useState<KnowledgeDocument[]>([]);
-  const [teamDocs, setTeamDocs] = useState<KnowledgeDocument[]>([]);
   const [shareTogglingId, setShareTogglingId] = useState<string | null>(null);
   const [shareTeam, setShareTeam] = useState(false);
   const [queue, setQueue] = useState<PendingFile[]>([]);
@@ -89,27 +97,44 @@ export function DocumentsPage() {
   const [uploadFolder, setUploadFolder] = useState("");
   const [uploadTags, setUploadTags] = useState("");
   const [filterFolder, setFilterFolder] = useState<string | null>(null);
+  const [folders, setFolders] = useState<string[]>([]);
+  const [stats, setStats] = useState<DocumentStats | null>(null);
 
+  // 我的文档：服务端分页 + 关键词（文件名/标签）；folder 过滤走 extraParams（变化时回第 1 页）
+  const docsQuery = usePaginatedQuery<KnowledgeDocument>(
+    useCallback(
+      (params) =>
+        get(withQuery("/documents", { ...params, folder: filterFolder ?? "" }), pageSchema(DocumentSchema)),
+      [filterFolder],
+    ),
+    { pageSize: 10, extraParams: { folder: filterFolder ?? "" } },
+  );
+  // 团队空间：切到该 Tab 才请求（enabled），独立分页/搜索状态
+  const teamQuery = usePaginatedQuery<KnowledgeDocument>(
+    useCallback((params) => get(withQuery("/documents/team", params), pageSchema(DocumentSchema)), []),
+    { pageSize: 10, enabled: tab === "team" },
+  );
+
+  const docs = docsQuery.items;
+  const teamDocs = teamQuery.items;
+  const setDocs = docsQuery.setItems;
+  const setTeamDocs = teamQuery.setItems;
+  const refreshTeam = teamQuery.refresh;
+
+  const refreshStats = useCallback(() => {
+    get("/documents/stats", DocumentStatsSchema).then(setStats).catch(() => {});
+  }, []);
+
+  const refreshFolders = useCallback(() => {
+    get("/documents/folders", z.array(z.string())).then(setFolders).catch(() => {});
+  }, []);
+
+  // 顶部 chips 计数来自 /documents/stats（全局口径，不随分页/搜索变化）
   const refresh = useCallback(() => {
-    get<KnowledgeDocument[]>("/documents", z.array(DocumentSchema))
-      .then(setDocs)
-      .catch((err) => console.error("documents fetch failed", err));
-  }, []);
-
-  const refreshTeam = useCallback(() => {
-    get<KnowledgeDocument[]>("/documents/team", z.array(DocumentSchema))
-      .then(setTeamDocs)
-      .catch((err) => console.error("team documents fetch failed", err));
-  }, []);
-
-  useEffect(() => {
-    refresh();
-  }, [refresh]);
-
-  // 切到团队空间 Tab 时拉取共享文档
-  useEffect(() => {
-    if (tab === "team") refreshTeam();
-  }, [tab, refreshTeam]);
+    docsQuery.refresh();
+    refreshStats();
+    refreshFolders();
+  }, [docsQuery.refresh, refreshStats, refreshFolders]); // eslint-disable-line react-hooks/exhaustive-deps
 
   /** 共享/取消共享到团队空间（owner 或 admin） */
   const toggleShare = async (doc: KnowledgeDocument) => {
@@ -126,7 +151,7 @@ export function DocumentsPage() {
     }
   };
 
-  const pendingCount = docs.filter((d) => PENDING_STATUSES.includes(d.status)).length;
+  const pendingCount = stats?.processing ?? 0;
 
   // 有待处理文档才轮询，全部终态后停止，避免无谓请求
   useEffect(() => {
@@ -201,6 +226,7 @@ export function DocumentsPage() {
     }
     setUploading(false);
     if (fileRef.current) fileRef.current.value = "";
+    refresh();
   };
 
   const clearQueue = () => setQueue([]);
@@ -274,6 +300,7 @@ export function DocumentsPage() {
         next.delete(doc.id);
         return next;
       });
+      refresh();
     } catch (err) {
       alert(err instanceof Error ? err.message : "删除失败");
     } finally {
@@ -295,19 +322,21 @@ export function DocumentsPage() {
     setSelected(new Set());
     setBulkDeleting(false);
     setBulkConfirm(false);
+    refresh();
   };
 
-  const readyCount = docs.filter((d) => d.status === "ready").length;
-  const failedCount = docs.filter((d) => d.status === "failed").length;
-  const noTextCount = docs.filter((d) => d.status === "no_text").length;
+  const readyCount = stats?.ready ?? 0;
+  const failedCount = stats?.failed ?? 0;
+  const noTextCount = stats?.no_text ?? 0;
+  const totalCount = stats?.total ?? 0;
   const busy = uploading;
+  // 是否有生效的过滤（用于区分「没有匹配」与「还没有文档」两种空态）
+  const isFiltering = docsQuery.query !== "" || filterFolder !== null;
 
-  // 文件夹过滤：全部非空 folder 去重排序；filterFolder 为 null 表示不过滤
-  const folders = Array.from(new Set(docs.map((d) => d.folder).filter((f) => f))).sort();
-  const filteredDocs = filterFolder === null ? docs : docs.filter((d) => d.folder === filterFolder);
-  const allSelected = filteredDocs.length > 0 && filteredDocs.every((d) => selected.has(d.id));
+  // 「全选」只作用于当前页；跨页已选项保留在 selected 中（批量删除用）
+  const allSelected = docs.length > 0 && docs.every((d) => selected.has(d.id));
   const toggleSelectAll = () =>
-    setSelected(allSelected ? new Set() : new Set(filteredDocs.map((d) => d.id)));
+    setSelected(allSelected ? new Set() : new Set(docs.map((d) => d.id)));
 
   return (
     <main className="min-h-screen bg-gradient-to-b from-theme-bg via-theme-bg to-theme-deep px-4 py-8 sm:px-8">
@@ -503,13 +532,21 @@ export function DocumentsPage() {
 
         {tab === "mine" && (
         <>
+        <SearchInput
+          value={docsQuery.query}
+          onChange={docsQuery.setQuery}
+          placeholder="搜索文件名或标签"
+          ariaLabel="搜索我的文档"
+          className="w-full sm:max-w-sm"
+        />
+        {docsQuery.error && <p className="text-sm text-red-400">文档加载失败：{docsQuery.error}</p>}
         <div className="flex flex-wrap items-center gap-2 text-sm">
           <button
             type="button"
             onClick={() => setFilterFolder(null)}
             className={`rounded-full px-3 py-1 cursor-pointer transition-colors ${filterFolder === null ? "bg-brand text-white" : "bg-white/10 text-theme-sub hover:bg-slate-200"}`}
           >
-            全部 {docs.length}
+            全部 {totalCount}
           </button>
           {folders.map((f) => (
             <button
@@ -555,13 +592,21 @@ export function DocumentsPage() {
 
         {tab === "team" && (
         <section className="space-y-3">
+          <SearchInput
+            value={teamQuery.query}
+            onChange={teamQuery.setQuery}
+            placeholder="搜索文件名 / 标签 / 共享人"
+            ariaLabel="搜索团队空间文档"
+            className="w-full sm:max-w-sm"
+          />
+          {teamQuery.error && <p className="text-sm text-red-400">团队空间加载失败：{teamQuery.error}</p>}
           {teamDocs.length === 0 ? (
             <div className="flex flex-col items-center rounded-2xl border border-dashed border-theme-line bg-theme-card/60 px-6 py-16 text-center">
               <div className="flex h-12 w-12 items-center justify-center rounded-xl bg-brand/15 text-brand-light">
                 <Users size={22} />
               </div>
-              <p className="mt-5 font-medium text-theme-text">团队空间还没有共享文档</p>
-              <p className="mt-1 text-sm text-theme-sub">在「我的文档」中点击共享按钮，即可把文档共享给全员检索</p>
+              <p className="mt-5 font-medium text-theme-text">{teamQuery.query !== "" ? "没有匹配的共享文档" : "团队空间还没有共享文档"}</p>
+              <p className="mt-1 text-sm text-theme-sub">{teamQuery.query !== "" ? "换个关键词试试" : "在「我的文档」中点击共享按钮，即可把文档共享给全员检索"}</p>
             </div>
           ) : (
             teamDocs.map((d) => {
@@ -634,6 +679,7 @@ export function DocumentsPage() {
               );
             })
           )}
+          <Pagination page={teamQuery.page} pages={teamQuery.pages} total={teamQuery.total} onPageChange={teamQuery.setPage} disabled={teamQuery.loading} />
         </section>
         )}
 
@@ -644,8 +690,9 @@ export function DocumentsPage() {
               <div className="flex h-12 w-12 items-center justify-center rounded-xl bg-gradient-to-br from-brand to-brand-dark text-white shadow-pop">
                 <FileUp size={22} />
               </div>
-              <p className="mt-5 font-medium text-theme-text">还没有上传过文档</p>
-              <p className="mt-1 text-sm text-theme-sub">上传制度、手册或 FAQ，即可在问答中检索并带引用回答</p>
+              <p className="mt-5 font-medium text-theme-text">{isFiltering ? "没有匹配的文档" : "还没有上传过文档"}</p>
+              <p className="mt-1 text-sm text-theme-sub">{isFiltering ? "换个关键词，或清空文件夹筛选试试" : "上传制度、手册或 FAQ，即可在问答中检索并带引用回答"}</p>
+              {!isFiltering && (<>
               <div className="mt-8 grid w-full max-w-xl gap-3 sm:grid-cols-3">
                 {[
                   { icon: FileUp, title: "上传文档", desc: ".txt/.md/.pdf，单个 ≤20MB" },
@@ -665,9 +712,10 @@ export function DocumentsPage() {
                 <FileUp size={14} />
                 上传第一份文档
               </Button>
+              </>)}
             </div>
           ) : (
-            filteredDocs.map((d) => {
+            docs.map((d) => {
               const meta = STATUS_META[d.status];
               const sideText =
                 d.status === "ready"
@@ -798,6 +846,7 @@ export function DocumentsPage() {
               );
             })
           )}
+          <Pagination page={docsQuery.page} pages={docsQuery.pages} total={docsQuery.total} onPageChange={docsQuery.setPage} disabled={docsQuery.loading} />
         </section>
         )}
 

@@ -20,12 +20,13 @@ import {
 import { z } from "zod";
 
 import { ConfirmDialog } from "../../components/ConfirmDialog";
-import { del, get, post, postForm } from "../../api/client";
+import { del, get, post, postForm, withQuery } from "../../api/client";
 import {
   EvalDatasetSchema,
   EvalRunDetailSchema,
   EvalRunSchema,
   OnlineStatsSchema,
+  pageSchema,
   type EvalDataset,
   type EvalRun,
   type EvalRunDetail,
@@ -33,6 +34,9 @@ import {
 } from "../../api/schemas";
 import { Button } from "../../components/ui/button";
 import { Card, CardContent, CardHeader, CardTitle } from "../../components/ui/card";
+import { Pagination } from "../../components/ui/pagination";
+import { SearchInput } from "../../components/ui/search-input";
+import { usePaginatedQuery } from "../../hooks/usePaginatedQuery";
 
 interface GroupSummary {
   recall_at_k: Record<string, number>;
@@ -72,8 +76,6 @@ const GROUP_SHORT: Record<string, string> = {
 const runLabel = (name: string) => (name.length > 14 ? `${name.slice(0, 14)}…` : name);
 
 export default function EvalCenterTab() {
-  const [datasets, setDatasets] = useState<EvalDataset[]>([]);
-  const [runs, setRuns] = useState<EvalRun[]>([]);
   const [online, setOnline] = useState<OnlineStats | null>(null);
   const [showNewRun, setShowNewRun] = useState(false);
   const [error, setError] = useState<string | null>(null);
@@ -85,12 +87,35 @@ export default function EvalCenterTab() {
   const [compareRuns, setCompareRuns] = useState<EvalRunDetail[]>([]);
   const [cmpGroup, setCmpGroup] = useState<string>(DEFAULT_CMP_GROUP);
 
-  const refresh = useCallback(() => {
-    get("/admin/eval/datasets", z.array(EvalDatasetSchema)).then(setDatasets).catch(() => {});
-    get("/admin/eval/runs", z.array(EvalRunSchema)).then(setRuns).catch(() => {});
+  const datasetsQuery = usePaginatedQuery<EvalDataset>(
+    useCallback(
+      (params) => get(withQuery("/admin/eval/datasets", params), pageSchema(EvalDatasetSchema)),
+      [],
+    ),
+    { pageSize: 10 },
+  );
+  // 运行列表按 created_at 倒序：page=1 即最新一页。pageSize=10（>2 即可）仍足够覆盖
+  // 「最新 done run」的查找（并发闸保证同刻最多 1 个在途 run，故最新 done 必在前 2 条内）。
+  const runsQuery = usePaginatedQuery<EvalRun>(
+    useCallback(
+      (params) => get(withQuery("/admin/eval/runs", params), pageSchema(EvalRunSchema)),
+      [],
+    ),
+    { pageSize: 10 },
+  );
+  const datasets = datasetsQuery.items;
+  const runs = runsQuery.items;
+
+  const refreshOnline = useCallback(() => {
     get("/admin/eval/online-stats?days=14", OnlineStatsSchema).then(setOnline).catch(() => {});
   }, []);
-  useEffect(() => { refresh(); }, [refresh]);
+  useEffect(() => { refreshOnline(); }, [refreshOnline]);
+
+  const refresh = useCallback(() => {
+    datasetsQuery.refresh();
+    runsQuery.refresh();
+    refreshOnline();
+  }, [datasetsQuery.refresh, runsQuery.refresh, refreshOnline]); // eslint-disable-line react-hooks/exhaustive-deps
 
   // 运行中 run 5s 轮询（终态即停）
   const activeCount = runs.filter((r) => r.status === "pending" || r.status === "running").length;
@@ -270,7 +295,7 @@ export default function EvalCenterTab() {
           { label: "最佳 Recall@5（最近 run）", value: pct(bestRecall5) },
           { label: "最佳 MRR（最近 run）", value: pct(bestMrr) },
           { label: "线上点踩率（14 天）", value: online?.down_rate == null ? "-" : pct(online.down_rate) },
-          { label: "评测运行总数", value: String(runs.length) },
+          { label: "评测运行总数", value: String(runsQuery.total) },
         ].map((c) => (
           <Card key={c.label}><CardContent className="py-4"><p className="text-xs text-theme-sub">{c.label}</p><p className="mt-1 text-xl font-semibold text-theme-text">{c.value}</p></CardContent></Card>
         ))}
@@ -285,9 +310,11 @@ export default function EvalCenterTab() {
               <Play size={14} />运行新评测
             </Button>
             <ImportButtons onDone={refresh} onError={setError} />
+            <SearchInput value={datasetsQuery.query} onChange={datasetsQuery.setQuery} placeholder="搜索数据集名称" ariaLabel="搜索数据集" className="ml-auto w-full sm:w-56" />
           </div>
+          {datasetsQuery.error && <p className="text-sm text-red-400">数据集加载失败：{datasetsQuery.error}</p>}
           {datasets.length === 0 ? (
-            <p className="py-4 text-sm text-theme-sub">还没有数据集：导入内置样例或上传 jsonl（每行 {"{"}"q","gold_doc","gold_keywords"{"}"}）。</p>
+            <p className="py-4 text-sm text-theme-sub">{datasetsQuery.query !== "" ? `没有匹配「${datasetsQuery.query}」的数据集。` : <>还没有数据集：导入内置样例或上传 jsonl（每行 {"{"}"q","gold_doc","gold_keywords"{"}"}）。</>}</p>
           ) : (
             <table className="w-full text-sm">
               <thead><tr className="text-left text-xs text-theme-sub"><th className="pb-2">名称</th><th className="pb-2">来源</th><th className="pb-2 text-right">题数</th><th className="pb-2 text-right">操作</th></tr></thead>
@@ -307,6 +334,7 @@ export default function EvalCenterTab() {
               </tbody>
             </table>
           )}
+          <Pagination page={datasetsQuery.page} pages={datasetsQuery.pages} total={datasetsQuery.total} onPageChange={datasetsQuery.setPage} disabled={datasetsQuery.loading} />
         </CardContent>
       </Card>
 
@@ -315,6 +343,7 @@ export default function EvalCenterTab() {
         <CardHeader>
           <CardTitle className="flex flex-wrap items-center justify-between gap-2">
             <span>评测运行（勾选 1 个看明细，2 个进入对比）</span>
+            <SearchInput value={runsQuery.query} onChange={runsQuery.setQuery} placeholder="搜索运行名称" ariaLabel="搜索评测运行" className="w-full sm:w-56" />
             {selectedIds.length > 0 && (
               <span className="flex items-center gap-2 text-sm font-normal">
                 <span className="text-theme-sub">已选 {selectedIds.length} 项</span>
@@ -327,8 +356,9 @@ export default function EvalCenterTab() {
           </CardTitle>
         </CardHeader>
         <CardContent>
+          {runsQuery.error && <p className="mb-2 text-sm text-red-400">评测运行加载失败：{runsQuery.error}</p>}
           {runs.length === 0 ? (
-            <p className="py-4 text-sm text-theme-sub">还没有评测运行。选择数据集后点击「运行新评测」。</p>
+            <p className="py-4 text-sm text-theme-sub">{runsQuery.query !== "" ? `没有匹配「${runsQuery.query}」的评测运行。` : "还没有评测运行。选择数据集后点击「运行新评测」。"}</p>
           ) : (
             <table className="w-full table-auto text-sm">
               <thead><tr className="text-left text-xs text-theme-sub"><th className="w-8 pb-2"></th><th className="pb-2">名称</th><th className="whitespace-nowrap pb-2">状态</th><th className="whitespace-nowrap pb-2">配置组</th><th className="whitespace-nowrap pb-2 text-right">耗时</th><th className="whitespace-nowrap pb-2 text-right">时间</th><th className="w-10 pb-2"></th></tr></thead>
@@ -386,6 +416,7 @@ export default function EvalCenterTab() {
               </tbody>
             </table>
           )}
+          <Pagination page={runsQuery.page} pages={runsQuery.pages} total={runsQuery.total} onPageChange={runsQuery.setPage} disabled={runsQuery.loading} className="mt-3" />
         </CardContent>
       </Card>
 

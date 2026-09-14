@@ -8,6 +8,39 @@
  */
 import { z } from "zod";
 
+// ---------- 通用：列表分页信封 ----------
+/**
+ * 后端所有列表接口统一返回形状（对应 backend/app/schemas/common.py 的 Page[T]）。
+ * 用法：`get("/documents", pageSchema(DocumentSchema))`。
+ */
+export function pageSchema<T extends z.ZodTypeAny>(item: T) {
+  return z.object({
+    items: z.array(item),
+    total: z.number().int().nonnegative(),
+    page: z.number().int().positive(),
+    page_size: z.number().int().positive(),
+    pages: z.number().int().nonnegative(),
+  });
+}
+
+export type PageResult<T> = {
+  items: T[];
+  total: number;
+  page: number;
+  page_size: number;
+  pages: number;
+};
+
+/** 文档列表顶部计数（全局口径，不随 q/folder 变化） */
+export const DocumentStatsSchema = z.object({
+  total: z.number().int().nonnegative(),
+  ready: z.number().int().nonnegative(),
+  processing: z.number().int().nonnegative(),
+  failed: z.number().int().nonnegative(),
+  no_text: z.number().int().nonnegative(),
+});
+export type DocumentStats = z.infer<typeof DocumentStatsSchema>;
+
 // ---------- 鉴权 ----------
 export const UserSchema = z.object({
   id: z.string().uuid(),
