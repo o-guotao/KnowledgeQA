@@ -28,7 +28,6 @@ import {
   type EvalRunDetail,
   type OnlineStats,
 } from "../../api/schemas";
-import { Badge } from "../../components/ui/badge";
 import { Button } from "../../components/ui/button";
 import { Card, CardContent, CardHeader, CardTitle } from "../../components/ui/card";
 
@@ -52,11 +51,19 @@ const GROUP_COLORS = ["#94a3b8", "#6366f1", "#22c55e", "#f59e0b", "#ef4444", "#8
 const pct = (v: number | undefined) => (v === undefined ? "-" : `${(v * 100).toFixed(1)}%`);
 const fmtMs = (v: number | null | undefined) => (v == null ? "-" : v >= 1000 ? `${(v / 1000).toFixed(2)}s` : `${Math.round(v)}ms`);
 
-const STATUS_META: Record<string, { label: string; variant: "muted" | "warning" | "success" | "destructive" }> = {
-  pending: { label: "排队中", variant: "muted" },
-  running: { label: "运行中", variant: "warning" },
-  done: { label: "完成", variant: "success" },
-  failed: { label: "失败", variant: "destructive" },
+// 状态：小圆点 + 文字（紧凑、不换行），不用大圆角 pill
+const STATUS_DOT: Record<string, { label: string; dot: string; text: string }> = {
+  pending: { label: "排队中", dot: "bg-slate-400", text: "text-slate-500" },
+  running: { label: "运行中", dot: "bg-amber-500", text: "text-amber-500" },
+  done: { label: "完成", dot: "bg-emerald-500", text: "text-emerald-500" },
+  failed: { label: "失败", dot: "bg-red-500", text: "text-red-400" },
+};
+// 配置组紧凑缩写（全名放 title）
+const GROUP_SHORT: Record<string, string> = {
+  baseline: "base",
+  hybrid: "hybrid",
+  hybrid_bm25: "bm25",
+  hybrid_bm25_rerank: "rerank",
 };
 
 export default function EvalCenterTab() {
@@ -216,12 +223,13 @@ export default function EvalCenterTab() {
           {runs.length === 0 ? (
             <p className="py-4 text-sm text-theme-sub">还没有评测运行。选择数据集后点击「运行新评测」。</p>
           ) : (
-            <table className="w-full text-sm">
-              <thead><tr className="text-left text-xs text-theme-sub"><th className="pb-2 w-8"></th><th className="pb-2">名称</th><th className="pb-2">状态</th><th className="pb-2">配置组</th><th className="pb-2 text-right">耗时</th><th className="pb-2">时间</th></tr></thead>
+            <table className="w-full table-auto text-sm">
+              <thead><tr className="text-left text-xs text-theme-sub"><th className="w-8 pb-2"></th><th className="pb-2">名称</th><th className="whitespace-nowrap pb-2">状态</th><th className="whitespace-nowrap pb-2">配置组</th><th className="whitespace-nowrap pb-2 text-right">耗时</th><th className="whitespace-nowrap pb-2 text-right">时间</th></tr></thead>
               <tbody>
                 {runs.map((r) => {
-                  const meta = STATUS_META[r.status] ?? { label: r.status, variant: "muted" as const };
-                  const gs = ((r.config as { groups?: string[] }).groups ?? []).join("/");
+                  const st = STATUS_DOT[r.status] ?? { label: r.status, dot: "bg-slate-400", text: "text-slate-500" };
+                  const groupList = (r.config as { groups?: string[] }).groups ?? [];
+                  const gs = groupList.map((g) => GROUP_SHORT[g] ?? g).join("/");
                   return (
                     <tr
                       key={r.id}
@@ -238,11 +246,23 @@ export default function EvalCenterTab() {
                           onChange={() => toggleCompare(r.id)}
                         />
                       </td>
-                      <td className="py-2">{r.name}{r.error && <p className="text-xs text-red-400">{r.error}</p>}</td>
-                      <td className="py-2"><Badge variant={meta.variant}>{meta.label}</Badge></td>
-                      <td className="py-2 text-xs text-theme-sub">{gs}</td>
-                      <td className="py-2 text-right">{fmtMs(r.duration_ms)}</td>
-                      <td className="py-2 text-xs text-theme-sub">{new Date(r.created_at).toLocaleString("zh-CN", { hour12: false })}</td>
+                      <td className="max-w-0 py-2">
+                        <p className="truncate" title={r.name}>{r.name}</p>
+                        {r.error && (
+                          <p className="max-w-72 truncate text-xs text-red-400" title={r.error}>{r.error}</p>
+                        )}
+                      </td>
+                      <td className="whitespace-nowrap py-2 pr-3">
+                        <span className={`inline-flex items-center gap-1.5 text-xs ${st.text}`}>
+                          <span className={`h-1.5 w-1.5 rounded-full ${st.dot}`} />
+                          {st.label}
+                        </span>
+                      </td>
+                      <td className="whitespace-nowrap py-2 pr-3 font-mono text-xs text-theme-sub" title={groupList.join(" / ")}>{gs}</td>
+                      <td className="whitespace-nowrap py-2 text-right">{fmtMs(r.duration_ms)}</td>
+                      <td className="whitespace-nowrap py-2 pl-3 text-right text-xs text-theme-sub">
+                        {new Date(r.created_at).toLocaleString("zh-CN", { month: "2-digit", day: "2-digit", hour: "2-digit", minute: "2-digit", hour12: false })}
+                      </td>
                     </tr>
                   );
                 })}
