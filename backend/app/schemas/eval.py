@@ -61,6 +61,15 @@ class EvalRunDetail(BaseModel):
     items: list[EvalRunItemOut]
 
 
+class EvalRunBatchDeleteRequest(BaseModel):
+    run_ids: list[uuid.UUID] = Field(min_length=1, max_length=200)
+
+
+class EvalRunBatchDeleteResponse(BaseModel):
+    deleted: int
+    failed: list[uuid.UUID] = []
+
+
 class OnlinePoint(BaseModel):
     date: str
     calls: int

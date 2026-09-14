@@ -11,7 +11,7 @@ from pathlib import Path
 
 from fastapi import APIRouter, Depends, Query, UploadFile
 from fastapi.responses import Response
-from sqlalchemy import func, select
+from sqlalchemy import delete, func, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.core.errors import AppError, not_found
@@ -26,6 +26,8 @@ from app.models.user import User
 from app.schemas.eval import (
     BuiltinImportRequest,
     EvalDatasetOut,
+    EvalRunBatchDeleteRequest,
+    EvalRunBatchDeleteResponse,
     EvalRunCreate,
     EvalRunDetail,
     EvalRunItemOut,
@@ -170,6 +172,50 @@ async def create_run(
     await db.commit()
     await db.refresh(run)
     return EvalRunOut.model_validate(run)
+
+
+async def _delete_run_and_tasks(db: AsyncSession, run: EvalRun) -> None:
+    """删除 run + 逐题明细（显式删除：sqlite 默认不强制 FK CASCADE）+ 尽力取消其未完成任务。"""
+    await db.execute(delete(EvalRunItem).where(EvalRunItem.run_id == run.id))
+    stale = (
+        await db.execute(
+            select(Task).where(
+                Task.type == "run_eval",
+                Task.status.in_(("pending", "failed", "dead")),
+            )
+        )
+    ).scalars().all()
+    for task in stale:
+        if (task.payload or {}).get("run_id") == str(run.id):
+            await db.delete(task)
+    await db.delete(run)
+
+
+@router.delete("/admin/eval/runs/{run_id}", status_code=204)
+async def delete_run(run_id: uuid.UUID, db: AsyncSession = Depends(get_db)) -> None:
+    run = await db.get(EvalRun, run_id)
+    if run is None:
+        raise not_found("评测运行")
+    await _delete_run_and_tasks(db, run)
+    await db.commit()
+
+
+@router.post("/admin/eval/runs/batch-delete", response_model=EvalRunBatchDeleteResponse)
+async def batch_delete_runs(
+    body: EvalRunBatchDeleteRequest, db: AsyncSession = Depends(get_db)
+) -> EvalRunBatchDeleteResponse:
+    """批量删除评测运行：逐个删除（含逐题明细级联），失败的收集返回。"""
+    deleted = 0
+    failed: list[uuid.UUID] = []
+    for run_id in body.run_ids:
+        run = await db.get(EvalRun, run_id)
+        if run is None:
+            failed.append(run_id)
+            continue
+        await _delete_run_and_tasks(db, run)
+        deleted += 1
+    await db.commit()
+    return EvalRunBatchDeleteResponse(deleted=deleted, failed=failed)
 
 
 @router.get("/admin/eval/runs/{run_id}", response_model=EvalRunDetail)

@@ -19,6 +19,7 @@ import {
 } from "recharts";
 import { z } from "zod";
 
+import { ConfirmDialog } from "../../components/ConfirmDialog";
 import { del, get, post, postForm } from "../../api/client";
 import {
   EvalDatasetSchema,
@@ -106,8 +107,9 @@ export default function EvalCenterTab() {
     if (latestDoneId && !activeRunId && selectedIds.length === 0) setActiveRunId(latestDoneId);
   }, [latestDoneId, activeRunId, selectedIds.length]);
 
-  // 视图模式：勾选优先（1=单 run，2=对比）；无勾选时看 activeRun（点行/自动最新）
+  // 视图模式：勾选优先（1=单 run，2=对比，>2=仅批量管理）；无勾选时看 activeRun（点行/自动最新）
   const viewIds = selectedIds.length > 0 ? selectedIds : activeRunId ? [activeRunId] : [];
+  const tooManySelected = selectedIds.length > 2;
   const compareMode = viewIds.length === 2;
 
   useEffect(() => {
@@ -124,12 +126,41 @@ export default function EvalCenterTab() {
       .catch(() => setCompareRuns([]));
   }, [viewIds.join(","), compareMode]); // eslint-disable-line react-hooks/exhaustive-deps
 
+  // 勾选不限数量：1 个看明细、2 个进入对比、更多仅用于批量删除
   const toggleSelect = (id: string) =>
-    setSelectedIds((prev) => {
-      if (prev.includes(id)) return prev.filter((x) => x !== id);
-      // 最多 2 个：超出时丢弃最早的，保留最新勾选
-      return [...prev, id].slice(-2);
-    });
+    setSelectedIds((prev) => (prev.includes(id) ? prev.filter((x) => x !== id) : [...prev, id]));
+
+  // ---- 删除（单个 / 批量）----
+  const [deleteTarget, setDeleteTarget] = useState<EvalRun | null>(null);
+  const [batchConfirm, setBatchConfirm] = useState(false);
+  const [deleting, setDeleting] = useState(false);
+
+  const afterDelete = (ids: string[]) => {
+    setSelectedIds((prev) => prev.filter((x) => !ids.includes(x)));
+    if (activeRunId && ids.includes(activeRunId)) setActiveRunId(null);
+    setDeleteTarget(null);
+    setBatchConfirm(false);
+    refresh();
+  };
+
+  const removeOneRun = async () => {
+    if (!deleteTarget) return;
+    setDeleting(true);
+    try {
+      await del(`/admin/eval/runs/${deleteTarget.id}`);
+      afterDelete([deleteTarget.id]);
+    } catch (e) { setError(e instanceof Error ? e.message : "删除失败"); }
+    finally { setDeleting(false); }
+  };
+
+  const removeSelectedRuns = async () => {
+    setDeleting(true);
+    try {
+      await post("/admin/eval/runs/batch-delete", { run_ids: selectedIds }, z.object({ deleted: z.number(), failed: z.array(z.string()) }));
+      afterDelete(selectedIds);
+    } catch (e) { setError(e instanceof Error ? e.message : "批量删除失败"); }
+    finally { setDeleting(false); }
+  };
 
   // 对比模式下可选配置组：两 run 交集（无交集则并集）
   const cmpGroups = useMemo(() => {
@@ -279,15 +310,28 @@ export default function EvalCenterTab() {
         </CardContent>
       </Card>
 
-      {/* 运行列表：勾选驱动下方面板 */}
+      {/* 运行列表：勾选驱动下方面板；勾选数量不限（批量删除用） */}
       <Card>
-        <CardHeader><CardTitle>评测运行（勾选 1 个看明细，勾选 2 个进入对比）</CardTitle></CardHeader>
+        <CardHeader>
+          <CardTitle className="flex flex-wrap items-center justify-between gap-2">
+            <span>评测运行（勾选 1 个看明细，2 个进入对比）</span>
+            {selectedIds.length > 0 && (
+              <span className="flex items-center gap-2 text-sm font-normal">
+                <span className="text-theme-sub">已选 {selectedIds.length} 项</span>
+                <Button size="sm" variant="destructive" onClick={() => setBatchConfirm(true)}>
+                  <Trash2 size={14} />删除选中
+                </Button>
+                <Button size="sm" variant="ghost" onClick={() => setSelectedIds([])}>清空选择</Button>
+              </span>
+            )}
+          </CardTitle>
+        </CardHeader>
         <CardContent>
           {runs.length === 0 ? (
             <p className="py-4 text-sm text-theme-sub">还没有评测运行。选择数据集后点击「运行新评测」。</p>
           ) : (
             <table className="w-full table-auto text-sm">
-              <thead><tr className="text-left text-xs text-theme-sub"><th className="w-8 pb-2"></th><th className="pb-2">名称</th><th className="whitespace-nowrap pb-2">状态</th><th className="whitespace-nowrap pb-2">配置组</th><th className="whitespace-nowrap pb-2 text-right">耗时</th><th className="whitespace-nowrap pb-2 text-right">时间</th></tr></thead>
+              <thead><tr className="text-left text-xs text-theme-sub"><th className="w-8 pb-2"></th><th className="pb-2">名称</th><th className="whitespace-nowrap pb-2">状态</th><th className="whitespace-nowrap pb-2">配置组</th><th className="whitespace-nowrap pb-2 text-right">耗时</th><th className="whitespace-nowrap pb-2 text-right">时间</th><th className="w-10 pb-2"></th></tr></thead>
               <tbody>
                 {runs.map((r) => {
                   const st = STATUS_DOT[r.status] ?? { label: r.status, dot: "bg-slate-400", text: "text-slate-500" };
@@ -325,6 +369,17 @@ export default function EvalCenterTab() {
                       <td className="whitespace-nowrap py-2 pl-3 text-right text-xs text-theme-sub">
                         {new Date(r.created_at).toLocaleString("zh-CN", { month: "2-digit", day: "2-digit", hour: "2-digit", minute: "2-digit", hour12: false })}
                       </td>
+                      <td className="py-2 pl-2 text-right" onClick={(e) => e.stopPropagation()}>
+                        <Button
+                          size="sm"
+                          variant="ghost"
+                          aria-label={`删除 ${r.name}`}
+                          className="text-red-400 hover:bg-red-500/10"
+                          onClick={() => setDeleteTarget(r)}
+                        >
+                          <Trash2 size={14} />
+                        </Button>
+                      </td>
                     </tr>
                   );
                 })}
@@ -334,18 +389,24 @@ export default function EvalCenterTab() {
         </CardContent>
       </Card>
 
+      {tooManySelected && (
+        <div role="status" className="rounded-lg border border-theme-line bg-theme-card px-4 py-3 text-sm text-theme-sub">
+          已选 {selectedIds.length} 项（仅用于批量删除）。勾选 1 个查看明细，勾选 2 个进入对比模式。
+        </div>
+      )}
+
       {/* 选中 run 的状态面板：failed 显示错误，pending/running 显示进度 */}
-      {!compareMode && detail && detail.run.status === "failed" && (
+      {!compareMode && !tooManySelected && detail && detail.run.status === "failed" && (
         <div role="status" className="rounded-lg border border-red-200 bg-red-50 px-4 py-3 text-sm text-red-700">
           「{detail.run.name}」运行失败：{detail.run.error ?? "未知错误"}
         </div>
       )}
-      {!compareMode && detail && (detail.run.status === "pending" || detail.run.status === "running") && (
+      {!compareMode && !tooManySelected && detail && (detail.run.status === "pending" || detail.run.status === "running") && (
         <div role="status" className="rounded-lg border border-amber-200 bg-amber-50 px-4 py-3 text-sm text-amber-700">
           「{detail.run.name}」正在{detail.run.status === "pending" ? "排队" : "运行"}中，完成后自动展示数据…
         </div>
       )}
-      {!compareMode && detail && detail.run.status === "done" && groups.some((g) => groupAt(g).llm_error) && (
+      {!compareMode && !tooManySelected && detail && detail.run.status === "done" && groups.some((g) => groupAt(g).llm_error) && (
         <div role="status" className="rounded-lg border border-amber-200 bg-amber-50 px-4 py-3 text-sm text-amber-700">
           LLM 答案评测已降级：{groups.map((g) => groupAt(g).llm_error).find(Boolean)}
           （召回指标不受影响；请检查「模型设置」中的 key 或 DEEPSEEK_API_KEY 后重发）
@@ -372,7 +433,7 @@ export default function EvalCenterTab() {
       )}
 
       {/* 图表区：① 配置对比 + ② Recall@K 曲线 */}
-      {((!compareMode && detail?.run.status === "done" && groups.length > 0) || (compareMode && compareRuns.length === 2)) && (
+      {!tooManySelected && ((!compareMode && detail?.run.status === "done" && groups.length > 0) || (compareMode && compareRuns.length === 2)) && (
         <div className="grid gap-6 lg:grid-cols-2">
           <Card>
             <CardHeader>
@@ -463,7 +524,7 @@ export default function EvalCenterTab() {
       )}
 
       {/* ③ 逐题明细：单 run = 各组；对比 = 选定组跨 run 双列 + 变化 */}
-      {!compareMode && detail && detail.run.status === "done" && detail.items.length > 0 && (
+      {!compareMode && !tooManySelected && detail && detail.run.status === "done" && detail.items.length > 0 && (
         <Card>
           <CardHeader><CardTitle>逐题明细（rank 相对 baseline 变化）</CardTitle></CardHeader>
           <CardContent className="overflow-x-auto p-0">
@@ -579,6 +640,27 @@ export default function EvalCenterTab() {
       {showNewRun && (
         <NewRunDialog datasets={datasets} onClose={() => setShowNewRun(false)} onCreated={() => { setShowNewRun(false); refresh(); }} />
       )}
+
+      <ConfirmDialog
+        open={deleteTarget !== null}
+        title="删除评测运行"
+        description={deleteTarget ? `删除「${deleteTarget.name}」及其逐题明细？无法恢复。` : ""}
+        confirmText="删除"
+        destructive
+        loading={deleting}
+        onConfirm={() => void removeOneRun()}
+        onCancel={() => setDeleteTarget(null)}
+      />
+      <ConfirmDialog
+        open={batchConfirm}
+        title="批量删除评测运行"
+        description={`删除选中的 ${selectedIds.length} 条评测运行及其逐题明细？无法恢复。`}
+        confirmText={`删除 ${selectedIds.length} 条`}
+        destructive
+        loading={deleting}
+        onConfirm={() => void removeSelectedRuns()}
+        onCancel={() => setBatchConfirm(false)}
+      />
     </div>
   );
 }
