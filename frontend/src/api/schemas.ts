@@ -120,6 +120,64 @@ export const ChangelogEntrySchema = z.object({
 });
 export type ChangelogEntry = z.infer<typeof ChangelogEntrySchema>;
 
+// ---------- 评测中心 ----------
+export const EvalDatasetSchema = z.object({
+  id: z.string().uuid(),
+  name: z.string(),
+  source: z.string(),
+  item_count: z.number(),
+  created_at: z.string(),
+});
+export type EvalDataset = z.infer<typeof EvalDatasetSchema>;
+
+export const EvalRunSchema = z.object({
+  id: z.string().uuid(),
+  dataset_id: z.string().uuid().nullable(),
+  name: z.string(),
+  config: z.record(z.unknown()),
+  status: z.string(),
+  summary: z.record(z.unknown()),
+  error: z.string().nullable(),
+  duration_ms: z.number().nullable(),
+  created_at: z.string(),
+  finished_at: z.string().nullable(),
+});
+export type EvalRun = z.infer<typeof EvalRunSchema>;
+
+export const EvalRunItemSchema = z.object({
+  id: z.string().uuid(),
+  idx: z.number(),
+  question: z.string(),
+  gold_doc: z.string(),
+  ranks: z.record(z.unknown()),
+});
+export type EvalRunItem = z.infer<typeof EvalRunItemSchema>;
+
+export const EvalRunDetailSchema = z.object({
+  run: EvalRunSchema,
+  items: z.array(EvalRunItemSchema),
+});
+export type EvalRunDetail = z.infer<typeof EvalRunDetailSchema>;
+
+export const OnlineStatsSchema = z.object({
+  days: z.number(),
+  points: z.array(
+    z.object({
+      date: z.string(),
+      calls: z.number(),
+      p50_total_ms: z.number().nullable(),
+      p95_total_ms: z.number().nullable(),
+      p50_ttft_ms: z.number().nullable(),
+      avg_recall_ms: z.number().nullable(),
+      avg_rerank_ms: z.number().nullable(),
+    }),
+  ),
+  feedback_up: z.number(),
+  feedback_down: z.number(),
+  down_rate: z.number().nullable(),
+});
+export type OnlineStats = z.infer<typeof OnlineStatsSchema>;
+
 export const FeedbackStatsSchema = z.object({
   total_answered: z.number(),
   up_count: z.number(),

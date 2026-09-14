@@ -1,5 +1,5 @@
-import { ArrowLeft, Cpu, Loader2, Pencil, Plus, Save, Trash2, TrendingUp, Users, X } from "lucide-react";
-import { useCallback, useEffect, useMemo, useState } from "react";
+import { ArrowLeft, Cpu, FlaskConical, Loader2, Pencil, Plus, Save, Trash2, TrendingUp, Users, X } from "lucide-react";
+import { lazy, Suspense, useCallback, useEffect, useMemo, useState } from "react";
 import { useNavigate } from "react-router-dom";
 import { z } from "zod";
 
@@ -23,11 +23,15 @@ import { Input } from "../components/ui/input";
 const fmtTokens = (n: number) => (n >= 10000 ? `${(n / 10000).toFixed(1)}万` : String(n));
 const fmtCost = (n: number) => `¥${n.toFixed(4)}`;
 
+// 评测中心（含 recharts）懒加载：独立 chunk，不进主包首屏
+const EvalCenterTab = lazy(() => import("./admin/EvalCenterTab"));
+
 type Draft = { username: string; password: string; display_name: string; role: string; limit_tokens: string };
 const emptyDraft = (): Draft => ({ username: "", password: "", display_name: "", role: "user", limit_tokens: "" });
 
 export function AdminPage() {
   const navigate = useNavigate();
+  const [tab, setTab] = useState<"usage" | "eval">("usage");
   const [users, setUsers] = useState<AdminUser[]>([]);
   const [daily, setDaily] = useState<DailyUsage[]>([]);
   const [byModel, setByModel] = useState<ModelUsage[]>([]);
@@ -107,7 +111,7 @@ export function AdminPage() {
 
   return (
     <main className="min-h-screen bg-gradient-to-b from-theme-bg via-theme-bg to-theme-deep px-4 py-8 sm:px-8">
-      <div className="mx-auto max-w-6xl space-y-6">
+      <div className="mx-auto max-w-[1400px] space-y-6">
         <header className="flex items-center justify-between gap-3">
           <div className="flex items-center gap-3">
             <Button variant="ghost" size="icon" aria-label="返回问答" onClick={() => navigate("/")}><ArrowLeft size={18} /></Button>
@@ -119,6 +123,31 @@ export function AdminPage() {
           <div role="status" className={`rounded-lg border px-4 py-3 text-sm ${error ? "border-red-200 bg-red-50 text-red-700" : "border-emerald-200 bg-emerald-50 text-emerald-700"}`}>{error ?? message}</div>
         )}
 
+        {/* Tab：用量与用户 | 评测中心 */}
+        <div className="flex gap-1 border-b border-theme-line">
+          {([["usage", "用量与用户", Users], ["eval", "评测中心", FlaskConical]] as const).map(([key, label, Icon]) => (
+            <button
+              key={key}
+              type="button"
+              onClick={() => setTab(key)}
+              className={`-mb-px flex cursor-pointer items-center gap-1.5 border-b-2 px-4 py-2 text-sm transition-colors ${
+                tab === key ? "border-brand font-medium text-brand" : "border-transparent text-theme-sub hover:text-theme-text"
+              }`}
+            >
+              <Icon size={15} />
+              {label}
+            </button>
+          ))}
+        </div>
+
+        {tab === "eval" && (
+          <Suspense fallback={<div className="flex justify-center py-16"><Loader2 className="animate-spin text-theme-sub" size={22} /></div>}>
+            <EvalCenterTab />
+          </Suspense>
+        )}
+
+        {tab === "usage" && (
+        <>
         <section className="grid gap-4 sm:grid-cols-3">
           {[
             { label: "近30天 Tokens", value: fmtTokens(summary.tokens) },
@@ -235,6 +264,8 @@ export function AdminPage() {
             </table>
           </CardContent></Card>
         </section>
+        </>
+        )}
 
         <ConfirmDialog
           open={deleteTarget !== null}

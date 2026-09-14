@@ -90,6 +90,8 @@ class Settings(BaseSettings):
 
     # 任务与配额
     task_timeout_seconds: float = 300.0
+    # 评测任务（run_eval）独立超时：4 组配置矩阵 + 可选 LLM 生成，远超普通任务
+    eval_task_timeout_seconds: float = 1800.0
     task_max_retries: int = 3
     task_retry_base_seconds: float = 5.0
     quota_monthly_tokens: int = 1_000_000

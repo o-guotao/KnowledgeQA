@@ -8,6 +8,7 @@
 """
 import logging
 import math
+import time
 import uuid
 from dataclasses import dataclass
 
@@ -264,12 +265,18 @@ async def retrieve(
     query_embedding: list[float],
     top_k: int | None = None,
     query_text: str | None = None,
+    timing: dict | None = None,
 ) -> list[RetrievedChunk]:
-    """向量召回 + 混合检索 + 可选重排，最终返回 top_k。"""
+    """向量召回 + 混合检索 + 可选重排，最终返回 top_k。
+
+    timing 传入 dict 时回填分阶段耗时（毫秒，并发安全）：
+    recall_ms=向量+关键词+RRF（不含 embed 与重排）、rerank_ms=重排（未开启不写入）。
+    """
     settings = get_settings()
     k = top_k or settings.rag_top_k
     candidate_k = k * settings.rerank_candidate_multiplier if settings.rerank_enabled else k
 
+    t0 = time.perf_counter()
     vector_results = await _vector_recall(db, user_id, query_embedding, candidate_k)
 
     if settings.hybrid_search_enabled and query_text:
@@ -277,11 +284,16 @@ async def retrieve(
         candidates = _rrf_fuse(vector_results, keyword_results, candidate_k)
     else:
         candidates = vector_results
+    if timing is not None:
+        timing["recall_ms"] = round((time.perf_counter() - t0) * 1000, 1)
 
     if settings.rerank_enabled and query_text:
         from app.services.rerank import rerank
 
+        t1 = time.perf_counter()
         candidates = await rerank(query_text, candidates, k)
+        if timing is not None:
+            timing["rerank_ms"] = round((time.perf_counter() - t1) * 1000, 1)
     candidates = candidates[:k]
     # 父子块上下文解析：child 命中后取 parent 内容用于 prompt
     candidates = await _resolve_parent_context(db, candidates)
