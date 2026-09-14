@@ -26,6 +26,9 @@ class EvalRunCreate(BaseModel):
     with_llm: bool = False
     chunk_size: int = Field(default=128, ge=32, le=2048)
     chunk_overlap: int = Field(default=32, ge=0, le=512)
+    # 语料模式：sample=内置样例文档（gold_doc 须为样例库文件名）；
+    # online=创建者线上知识库（gold_doc 匹配线上文档名，检索范围=本人+团队空间）
+    kb_mode: str = Field(default="sample", pattern="^(sample|online)$")
 
 
 class EvalRunOut(BaseModel):

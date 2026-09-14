@@ -263,14 +263,23 @@ async def run_eval_run(run_id: uuid.UUID) -> None:
         cfg = dict(run.config or {})
         payload = dataset.payload
 
+    # 语料模式：sample=独立临时库（内置样例文档）；online=创建者线上知识库（本人+团队空间文档）
+    kb_mode = cfg.get("kb_mode", "sample")
     db_path = BASE_DIR / f".eval_run_{run_id.hex}.db"
-    engine = create_async_engine(f"sqlite+aiosqlite:///{db_path}")
-    factory = async_sessionmaker(engine, expire_on_commit=False, class_=AsyncSession)
+    engine = create_async_engine(f"sqlite+aiosqlite:///{db_path}") if kb_mode == "sample" else None
+    factory = (
+        async_sessionmaker(engine, expire_on_commit=False, class_=AsyncSession)
+        if engine is not None
+        else SessionLocal
+    )
     try:
         questions = parse_dataset(payload)
         top_k_max = max(1, min(int(cfg.get("top_k_max", 10)), 20))
         with_llm = bool(cfg.get("with_llm"))
         groups = [g for g in (cfg.get("groups") or ALL_GROUPS) if g in GROUP_DEFS] or ALL_GROUPS
+
+        # 创建者身份：with_llm 的 provider 解析 + online 语料的检索范围（本人+团队空间）
+        creator = uuid.UUID(cfg["user_id"]) if cfg.get("user_id") else uuid.UUID(int=0)
 
         # with_llm：provider 与日常问答同源（创建者的模型设置 → 全局 DeepSeek 兜底）；
         # 解析失败整 run 降级（不逐题报错）
@@ -279,7 +288,6 @@ async def run_eval_run(run_id: uuid.UUID) -> None:
             from app.services.model_configs import resolve_provider_config
 
             try:
-                creator = uuid.UUID(cfg["user_id"]) if cfg.get("user_id") else uuid.UUID(int=0)
                 async with SessionLocal() as db:
                     provider = await resolve_provider_config(db, creator)
             except Exception as exc:
@@ -288,12 +296,16 @@ async def run_eval_run(run_id: uuid.UUID) -> None:
 
         # chunk 参数 env 在建库阶段生效（与配置组无关，run 级快照）
         with _group_env(False, False, False, cfg):
-            async with engine.begin() as conn:
-                import app.models  # noqa: F401 确保全部模型已注册
+            if engine is not None:
+                async with engine.begin() as conn:
+                    import app.models  # noqa: F401 确保全部模型已注册
 
-                await conn.run_sync(Base.metadata.create_all)
-            user_id = uuid.uuid4()
-            await _build_kb(factory, user_id)
+                    await conn.run_sync(Base.metadata.create_all)
+            user_id = uuid.uuid4() if engine is not None else creator
+            if engine is not None:
+                await _build_kb(factory, user_id)
+            elif creator == uuid.UUID(int=0):
+                raise RuntimeError("online 语料模式需要有效的创建者 user_id")
 
             summary: dict = {}
             per_item: dict[int, dict] = {i: {} for i in range(1, len(questions) + 1)}
@@ -332,5 +344,6 @@ async def run_eval_run(run_id: uuid.UUID) -> None:
                 await db.commit()
         raise
     finally:
-        await engine.dispose()
-        db_path.unlink(missing_ok=True)
+        if engine is not None:
+            await engine.dispose()
+            db_path.unlink(missing_ok=True)

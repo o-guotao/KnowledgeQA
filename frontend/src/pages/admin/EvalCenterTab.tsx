@@ -492,6 +492,7 @@ function NewRunDialog({ datasets, onClose, onCreated }: { datasets: EvalDataset[
   const [groups, setGroups] = useState<string[]>(ALL);
   const [topKMax, setTopKMax] = useState(10);
   const [withLlm, setWithLlm] = useState(false);
+  const [kbMode, setKbMode] = useState<"sample" | "online">("sample");
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
 
@@ -501,7 +502,7 @@ function NewRunDialog({ datasets, onClose, onCreated }: { datasets: EvalDataset[
   const submit = async () => {
     setBusy(true); setError(null);
     try {
-      await post("/admin/eval/runs", { dataset_id: datasetId, groups, top_k_max: topKMax, with_llm: withLlm }, EvalRunSchema);
+      await post("/admin/eval/runs", { dataset_id: datasetId, groups, top_k_max: topKMax, with_llm: withLlm, kb_mode: kbMode }, EvalRunSchema);
       onCreated();
     } catch (e) { setError(e instanceof Error ? e.message : "发起失败"); }
     finally { setBusy(false); }
@@ -531,6 +532,18 @@ function NewRunDialog({ datasets, onClose, onCreated }: { datasets: EvalDataset[
                   <span className="font-mono text-xs">{g}</span>
                 </label>
               ))}
+            </div>
+          </fieldset>
+          <fieldset className="space-y-1.5 text-sm font-medium">评测语料
+            <div className="mt-1 space-y-1.5">
+              <label className="flex cursor-pointer items-start gap-2 text-sm font-normal">
+                <input type="radio" name="kb_mode" className="mt-1 accent-brand" checked={kbMode === "sample"} onChange={() => setKbMode("sample")} />
+                <span>内置样例语料（4 篇样例文档）<span className="block text-xs text-theme-sub">gold_doc 须为样例库文件名（员工手册.md 等）</span></span>
+              </label>
+              <label className="flex cursor-pointer items-start gap-2 text-sm font-normal">
+                <input type="radio" name="kb_mode" className="mt-1 accent-brand" checked={kbMode === "online"} onChange={() => setKbMode("online")} />
+                <span>我的线上知识库<span className="block text-xs text-theme-sub">gold_doc 匹配线上文档名，检索范围 = 我的文档 + 团队空间</span></span>
+              </label>
             </div>
           </fieldset>
           <label className="block space-y-1.5 text-sm font-medium">top_k 上限（Recall@1..K）
