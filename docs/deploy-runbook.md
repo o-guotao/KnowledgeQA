@@ -94,7 +94,8 @@ docker compose --profile cdn up -d --build
 4. **缓存规则**：
    - `/api/*` → **不缓存** + 分块透传（SSE 关键）
    - 静态资源（`/`、`/assets/*`）→ 可缓存
-5. CORS：前端与 API 同源（`qa.你的域名/api`），无需设
+5. CORS：前端与 API **同源**（`qa.你的域名/api`）→ 无需设；若前端改由 EdgeOne Pages 托管（与 API 不同源），须在 CVM `.env` 设 `CORS_ORIGINS=https://前端域名`（见 4.2）
+6. **上传大小**：CDN 控制台确认请求体上限 ≥ 25MB（否则上传被边缘拒绝，浏览器误报跨域）
 
 ### 2.3 阶段二验证清单
 - [ ] `curl https://qa.你的域名/api/healthz` → `{"status":"ok"}`（经 CDN→CVM→backend）
@@ -126,6 +127,60 @@ docker compose down                # 停止（数据保留在 volume）
 | 对话 401 | `DEEPSEEK_API_KEY` 未配/无效（服务端 .env） |
 | 上传 413 | 文件 >20MB 或 nginx `client_max_body_size` 太小（已配 25m） |
 | `api/healthz` 通但前端打不开 | frontend 容器未起（`docker compose ps frontend`）或 nginx-cdn 配置未生效 |
+| 上传报「跨域/CORS」 | 见下方 **4.1**（九成不是 CORS 配置错，而是中间层拒绝上传后响应缺 CORS 头） |
+| 容器内跑成 sqlite / 数据不落 Postgres | `DEPLOY_PROFILE` 被 `.env` 覆盖为 `local`：compose 用 `${DEPLOY_PROFILE:-production}` 插值，`.env` 必须为 `production` |
+| 域名访问接口全被拒（仅同源正常） | `CORS_ORIGINS` 未含线上域名（见 **4.2**） |
+
+### 4.1 上传文件报「跨域（CORS）」排查
+
+> 同源部署（本项目 nginx 均反代 `/api`）**不该出现 CORS**。浏览器把任何「缺少
+> `Access-Control-Allow-Origin` 的失败响应」都报成 CORS，因此要先看真实状态码。
+
+**三步定位**（5 分钟）：
+
+1. **DevTools → Network** 点失败的上传请求：
+   - `Request URL` 是相对 `/api/documents`（同源）还是其他域名（跨源）？
+   - **真实状态码**：`413`（体积超限）/ `502`、`0`（连接被断/超时）/ `401` / `4xx` 预检失败
+2. **看中间层日志**：
+   ```bash
+   docker compose logs --tail=50 nginx-cdn      # 或 nginx（production profile）
+   # 关键：client intended to send too large body / upstream prematurely closed
+   ```
+3. **curl 复现预检**（同源拓扑下也应返回 CORS 头）：
+   ```bash
+   curl -i -X OPTIONS https://<域名>/api/documents \
+     -H "Origin: https://<域名>" \
+     -H "Access-Control-Request-Method: POST" \
+     -H "Access-Control-Request-Headers: authorization,content-type"
+   # 期望 200/204 + access-control-allow-origin/-headers
+   ```
+
+**按结果修复**：
+
+| 真实状态码 | 原因 | 修复 |
+| --- | --- | --- |
+| 413 | 体积限制：nginx 已 25m，**EdgeOne CDN 边缘上限可能更小** | CDN 控制台调大上传上限 |
+| 502 / 0（仅大文件） | 上传超时或连接被重置 | nginx 增 `proxy_send_timeout 300s;`；CDN 调大超时 |
+| 请求 URL 为其他域名/IP:8000 | 真跨源（前端构建时 `VITE_API_BASE_URL` 被设为绝对地址） | 重建前端且不设该变量（保持相对 `/api`），或按 4.2 配 CORS |
+| OPTIONS 4xx 且无 CORS 头 | 后端白名单不含该域名 | 按 4.2 配 `CORS_ORIGINS` |
+
+### 4.2 真跨源时的 CORS 配置
+
+仅当**前端与 API 不同源**（如 EdgeOne Pages 托管前端 + `api.域名` 后端）才需要：
+
+```ini
+# CVM /opt/web-agent/.env
+CORS_ORIGINS=https://前端域名,https://www.前端域名
+```
+
+```bash
+docker compose --profile cdn up -d --force-recreate backend
+# 校验生效
+docker compose exec backend env | grep CORS_ORIGINS
+```
+
+要点：`allow_credentials=True` 时**不能写 `*`**，必须逐个列全（协议+域名，无尾斜杠）；
+上传预检需允许 `authorization`、`content-type` 头（后端 `allow_headers=["*"]` 已覆盖）。
 
 ---
 

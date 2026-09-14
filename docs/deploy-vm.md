@@ -56,12 +56,26 @@ cp .env.example .env
 nano .env   # 或 vim
 ```
 
-**必改项**：
+**必改项（5 条）**：
+- `DEPLOY_PROFILE=production` ⚠️ **最容易踩的坑**：compose 用 `${DEPLOY_PROFILE:-production}` 插值。
+  `.env.example` 不含该键（缺省即 production，直跑 python 时也一样），风险来自**直接拷贝本地开发
+  `.env`**（含 `DEPLOY_PROFILE=local`）到服务器——此时容器内会跑成 **sqlite + 容器内本地文件存储**，
+  数据不落 Postgres/MinIO 且重启即丢
+- `CORS_ORIGINS=https://<域名>,https://www.<域名>`（纯 IP 阶段用 `http://<虚机IP>`）：
+  同源部署（nginx 反代 `/api`）可不改，但若前端与 API 不同源则必须列全；**不能写 `*`**
 - `DEEPSEEK_API_KEY=sk-你的真实key`（没有 key 这一步，对话会报 MODEL_ERROR）
 - `JWT_SECRET=` 改成一串随机字符（如 `openssl rand -hex 32` 生成）
 - `MINIO_ROOT_PASSWORD=` 改强密码（MinIO 控制台要登录）
 
-其余项保留默认即可。
+其余项保留默认即可。改完核对实际生效值：
+
+```bash
+docker compose exec backend env | grep -E "DEPLOY_PROFILE|CORS_ORIGINS|DATABASE_URL"
+```
+
+> 上传文件报「跨域」但接口其他请求正常时，先别改 CORS——九成是中间层（CDN/nginx）拒绝了
+> 上传后返回的响应缺少 CORS 头（真实原因多为 413 体积超限 / 超时）。排查步骤见
+> `docs/deploy-runbook.md` 的「4.1 上传文件报跨域排查」。
 
 ## 五、启动
 
