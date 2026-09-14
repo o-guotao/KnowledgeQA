@@ -5,12 +5,21 @@ from urllib.parse import quote
 
 from fastapi import APIRouter, Depends, Form, UploadFile
 from fastapi.responses import Response
-from sqlalchemy import select, text
+from sqlalchemy import func, or_, select, text
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.config import get_settings
 from app.core.errors import AppError, not_found
+from app.core.pagination import (
+    LIKE_ESCAPE,
+    PageParams,
+    json_text_search,
+    like_pattern,
+    make_page,
+    normalize_q,
+    paginate,
+)
 from app.core.security import get_current_user
 from app.db import get_db
 from app.logging_config import get_trace_id
@@ -18,6 +27,7 @@ from app.models.chunk import Chunk
 from app.models.document import Document
 from app.models.task import Task
 from app.models.user import User
+from app.schemas.common import DocumentStats, Page
 from app.schemas.document import (
     BatchDeleteRequest,
     BatchDeleteResponse,
@@ -192,19 +202,33 @@ async def upload_document(
     return _to_out(document)
 
 
-@router.get("/documents", response_model=list[DocumentOut])
+@router.get("/documents", response_model=Page[DocumentOut])
 async def list_documents(
     folder: str | None = None,
+    q: str | None = None,
+    params: PageParams = Depends(),
     db: AsyncSession = Depends(get_db),
     user: User = Depends(get_current_user),
-) -> list[DocumentOut]:
+) -> Page[DocumentOut]:
+    """当前用户的文档列表：支持 folder 精确过滤 + q 关键词（文件名/标签）+ 分页。
+
+    排序带 id 兜底：created_at 相同（同批上传）时保证分页不重复、不遗漏。
+    """
     stmt = select(Document).where(Document.user_id == user.id)
     if folder is not None:
         stmt = stmt.where(Document.folder == folder)
-    rows = (
-        await db.execute(stmt.order_by(Document.folder.asc(), Document.created_at.desc()))
-    ).scalars().all()
-    return [_to_out(d) for d in rows]
+    term = normalize_q(q)
+    if term is not None:
+        pattern = like_pattern(term)
+        stmt = stmt.where(
+            or_(
+                Document.filename.ilike(pattern, escape=LIKE_ESCAPE),
+                json_text_search(Document.tags, term),
+            )
+        )
+    stmt = stmt.order_by(Document.folder.asc(), Document.created_at.desc(), Document.id.desc())
+    rows, total = await paginate(db, stmt, params)
+    return make_page([_to_out(row[0]) for row in rows], total, params)
 
 
 @router.get("/documents/folders", response_model=list[str])
@@ -220,25 +244,66 @@ async def list_folders(
     return sorted(rows)
 
 
-@router.get("/documents/team", response_model=list[DocumentOut])
-async def list_team_documents(
+@router.get("/documents/stats", response_model=DocumentStats)
+async def document_stats(
     db: AsyncSession = Depends(get_db), user: User = Depends(get_current_user)
-) -> list[DocumentOut]:
-    """团队空间：全员共享（visibility=team）文档列表，附 owner 显示名。任何登录用户可访问。"""
+) -> DocumentStats:
+    """当前用户文档的按状态计数（列表顶部 chips 数据源）。
+
+    全局口径：不随 q/folder 变化（folder 过滤的结果条数以分页信封的 total 展示）。
+    路由必须声明在 /documents/{document_id} 之前，否则 "stats" 会被当成 UUID 解析。
+    """
     rows = (
         await db.execute(
-            select(Document, User.display_name)
-            .join(User, Document.user_id == User.id)
-            .where(Document.visibility == "team")
-            .order_by(Document.created_at.desc())
+            select(Document.status, func.count())
+            .where(Document.user_id == user.id)
+            .group_by(Document.status)
         )
     ).all()
+    by_status = {status: count for status, count in rows}
+    return DocumentStats(
+        total=sum(by_status.values()),
+        ready=by_status.get("ready", 0),
+        processing=by_status.get("uploaded", 0) + by_status.get("processing", 0),
+        failed=by_status.get("failed", 0),
+        no_text=by_status.get("no_text", 0),
+    )
+
+
+@router.get("/documents/team", response_model=Page[DocumentOut])
+async def list_team_documents(
+    q: str | None = None,
+    params: PageParams = Depends(),
+    db: AsyncSession = Depends(get_db),
+    user: User = Depends(get_current_user),
+) -> Page[DocumentOut]:
+    """团队空间：全员共享（visibility=team）文档列表，附 owner 显示名。任何登录用户可访问。
+
+    q 额外匹配共享人显示名，便于"找某人共享的文档"。
+    """
+    stmt = (
+        select(Document, User.display_name)
+        .join(User, Document.user_id == User.id)
+        .where(Document.visibility == "team")
+    )
+    term = normalize_q(q)
+    if term is not None:
+        pattern = like_pattern(term)
+        stmt = stmt.where(
+            or_(
+                Document.filename.ilike(pattern, escape=LIKE_ESCAPE),
+                json_text_search(Document.tags, term),
+                User.display_name.ilike(pattern, escape=LIKE_ESCAPE),
+            )
+        )
+    stmt = stmt.order_by(Document.created_at.desc(), Document.id.desc())
+    rows, total = await paginate(db, stmt, params)
     result: list[DocumentOut] = []
     for doc, owner_name in rows:
         out = _to_out(doc)
         out.owner_name = owner_name or None
         result.append(out)
-    return result
+    return make_page(result, total, params)
 
 
 @router.patch("/documents/{document_id}", response_model=DocumentOut)

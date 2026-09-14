@@ -15,6 +15,14 @@ from sqlalchemy import delete, func, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.core.errors import AppError, not_found
+from app.core.pagination import (
+    LIKE_ESCAPE,
+    PageParams,
+    like_pattern,
+    make_page,
+    normalize_q,
+    paginate,
+)
 from app.core.security import require_admin
 from app.db import get_db
 from app.logging_config import get_trace_id
@@ -23,6 +31,7 @@ from app.models.message import Message
 from app.models.task import Task
 from app.models.usage_record import UsageRecord
 from app.models.user import User
+from app.schemas.common import Page
 from app.schemas.eval import (
     BuiltinImportRequest,
     EvalDatasetOut,
@@ -47,10 +56,23 @@ def _dataset_out(d: EvalDataset) -> EvalDatasetOut:
     return EvalDatasetOut.model_validate(d)
 
 
-@router.get("/admin/eval/datasets", response_model=list[EvalDatasetOut])
-async def list_datasets(db: AsyncSession = Depends(get_db)) -> list[EvalDatasetOut]:
-    rows = (await db.execute(select(EvalDataset).order_by(EvalDataset.created_at.desc()))).scalars().all()
-    return [_dataset_out(d) for d in rows]
+@router.get("/admin/eval/datasets", response_model=Page[EvalDatasetOut])
+async def list_datasets(
+    q: str | None = None,
+    source: str | None = None,
+    params: PageParams = Depends(),
+    db: AsyncSession = Depends(get_db),
+) -> Page[EvalDatasetOut]:
+    """评测数据集列表：q 匹配名称，可按 source（builtin/upload）过滤，服务端分页。"""
+    stmt = select(EvalDataset)
+    term = normalize_q(q)
+    if term is not None:
+        stmt = stmt.where(EvalDataset.name.ilike(like_pattern(term), escape=LIKE_ESCAPE))
+    if source is not None:
+        stmt = stmt.where(EvalDataset.source == source)
+    stmt = stmt.order_by(EvalDataset.created_at.desc(), EvalDataset.id.desc())
+    rows, total = await paginate(db, stmt, params)
+    return make_page([_dataset_out(row[0]) for row in rows], total, params)
 
 
 @router.post("/admin/eval/datasets/import-builtin", response_model=EvalDatasetOut, status_code=201)
@@ -115,15 +137,29 @@ async def delete_dataset(dataset_id: uuid.UUID, db: AsyncSession = Depends(get_d
     await db.commit()
 
 
-@router.get("/admin/eval/runs", response_model=list[EvalRunOut])
+@router.get("/admin/eval/runs", response_model=Page[EvalRunOut])
 async def list_runs(
-    dataset_id: uuid.UUID | None = None, db: AsyncSession = Depends(get_db)
-) -> list[EvalRunOut]:
-    stmt = select(EvalRun).order_by(EvalRun.created_at.desc()).limit(100)
+    q: str | None = None,
+    dataset_id: uuid.UUID | None = None,
+    status: str | None = None,
+    params: PageParams = Depends(),
+    db: AsyncSession = Depends(get_db),
+) -> Page[EvalRunOut]:
+    """评测运行列表：q 匹配运行名，可按 dataset_id / status 过滤，服务端分页。
+
+    改造前硬编码 .limit(100) 会静默截断历史记录，现由 page_size 控制（可翻到全部历史）。
+    """
+    stmt = select(EvalRun)
+    term = normalize_q(q)
+    if term is not None:
+        stmt = stmt.where(EvalRun.name.ilike(like_pattern(term), escape=LIKE_ESCAPE))
     if dataset_id is not None:
         stmt = stmt.where(EvalRun.dataset_id == dataset_id)
-    rows = (await db.execute(stmt)).scalars().all()
-    return [EvalRunOut.model_validate(r) for r in rows]
+    if status is not None:
+        stmt = stmt.where(EvalRun.status == status)
+    stmt = stmt.order_by(EvalRun.created_at.desc(), EvalRun.id.desc())
+    rows, total = await paginate(db, stmt, params)
+    return make_page([EvalRunOut.model_validate(row[0]) for row in rows], total, params)
 
 
 @router.post("/admin/eval/runs", response_model=EvalRunOut, status_code=202)

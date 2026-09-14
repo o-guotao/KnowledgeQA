@@ -2,14 +2,23 @@
 import uuid
 
 from fastapi import APIRouter, Depends
-from sqlalchemy import select
+from sqlalchemy import or_, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.core.errors import AppError
+from app.core.pagination import (
+    LIKE_ESCAPE,
+    PageParams,
+    like_pattern,
+    make_page,
+    normalize_q,
+    paginate,
+)
 from app.core.security import get_current_user
 from app.db import get_db
 from app.models.model_config import ModelConfig
 from app.models.user import User
+from app.schemas.common import Page
 from app.schemas.model_config import ModelConfigCreate, ModelConfigOut, ModelConfigTestResult, ModelConfigUpdate
 from app.services.model_configs import (
     activate_config,
@@ -35,14 +44,28 @@ def to_out(config: ModelConfig) -> ModelConfigOut:
     )
 
 
-@router.get("/model-configs", response_model=list[ModelConfigOut])
+@router.get("/model-configs", response_model=Page[ModelConfigOut])
 async def list_model_configs(
-    db: AsyncSession = Depends(get_db), user: User = Depends(get_current_user)
-) -> list[ModelConfigOut]:
-    rows = (
-        await db.execute(select(ModelConfig).where(ModelConfig.user_id == user.id).order_by(ModelConfig.created_at.desc()))
-    ).scalars().all()
-    return [to_out(row) for row in rows]
+    q: str | None = None,
+    params: PageParams = Depends(),
+    db: AsyncSession = Depends(get_db),
+    user: User = Depends(get_current_user),
+) -> Page[ModelConfigOut]:
+    """模型配置列表：q 匹配配置名/模型名/服务地址 + 分页。"""
+    stmt = select(ModelConfig).where(ModelConfig.user_id == user.id)
+    term = normalize_q(q)
+    if term is not None:
+        pattern = like_pattern(term)
+        stmt = stmt.where(
+            or_(
+                ModelConfig.name.ilike(pattern, escape=LIKE_ESCAPE),
+                ModelConfig.model_name.ilike(pattern, escape=LIKE_ESCAPE),
+                ModelConfig.base_url.ilike(pattern, escape=LIKE_ESCAPE),
+            )
+        )
+    stmt = stmt.order_by(ModelConfig.created_at.desc(), ModelConfig.id.desc())
+    rows, total = await paginate(db, stmt, params)
+    return make_page([to_out(row[0]) for row in rows], total, params)
 
 
 @router.post("/model-configs", response_model=ModelConfigOut, status_code=201)
