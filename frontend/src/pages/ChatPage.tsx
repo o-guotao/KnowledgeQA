@@ -1,38 +1,65 @@
-import { BookOpenText, Files, History, LayoutDashboard, LogOut, Menu, MessageSquare, Quote, Settings2, ShieldCheck, X, Zap } from "lucide-react";
+import { BookOpenText, Files, History, LayoutDashboard, Loader2, Menu, MessageSquare, Quote, Settings2, ShieldCheck, X, Zap } from "lucide-react";
 import { useCallback, useEffect, useRef, useState } from "react";
 import { z } from "zod";
 import { useLocation, useNavigate } from "react-router-dom";
 
-import { del, get, post } from "../api/client";
+import { del, get, post, withQuery } from "../api/client";
 import {
   MessageSchema,
   SessionSchema,
   VersionInfoSchema,
+  pageSchema,
   type ChatEvent,
+  type Message,
   type Session,
 } from "../api/schemas";
 import { useAuth } from "../auth/AuthContext";
+import { Button } from "../components/ui/button";
 import { ChatInput } from "../components/ChatInput";
 import { CitationPanel } from "../components/CitationPanel";
 import { MessageItem, type DisplayMessage } from "../components/MessageItem";
-import { QuotaBadge } from "../components/QuotaBadge";
 import { SessionList } from "../components/SessionList";
+import { UserMenu } from "../components/UserMenu";
 import { ThemeToggle } from "../components/ThemeToggle";
 import { ToolConfirmDialog } from "../components/ToolConfirmDialog";
 import { useChatStream } from "../hooks/useChatStream";
+import { usePaginatedQuery } from "../hooks/usePaginatedQuery";
 
 type PendingToolCall = Extract<ChatEvent, { type: "tool_call" }>;
 
 let localId = 0;
 const nextLocalId = () => `local-${++localId}`;
 
+/** 历史消息每页条数：与服务端 MessagePageParams 默认值一致 */
+const MESSAGE_PAGE_SIZE = 50;
+
+/** 服务端消息 → 展示模型（过滤流式残留行：后端读取时会把 streaming 清理为 aborted） */
+function toDisplayMessages(rows: Message[]): DisplayMessage[] {
+  return rows
+    .filter((m) => m.status !== "streaming")
+    .map((m) => ({
+      id: m.id,
+      serverId: m.id,
+      role: m.role,
+      content: m.content,
+      status: m.status,
+      citations: (m.citations ?? undefined) as DisplayMessage["citations"],
+      error: m.error,
+      traceId: m.trace_id,
+      feedback: m.feedback ?? null,
+    }));
+}
+
 export function ChatPage() {
   const { user, logout } = useAuth();
   const navigate = useNavigate();
   const location = useLocation();
-  const [sessions, setSessions] = useState<Session[]>([]);
   const [activeId, setActiveId] = useState<string | null>(null);
   const [messages, setMessages] = useState<DisplayMessage[]>([]);
+  // 历史消息分页：page=1 为最新一页，向前「加载更早」时累加页码并 prepend
+  const [historyPage, setHistoryPage] = useState(1);
+  const [hasOlder, setHasOlder] = useState(false);
+  const [loadingOlder, setLoadingOlder] = useState(false);
   const [activeCitation, setActiveCitation] = useState<string | null>(null);
   const [toolCall, setToolCall] = useState<PendingToolCall | null>(null);
   const [quotaRefreshKey, setQuotaRefreshKey] = useState(0);
@@ -49,26 +76,31 @@ export function ChatPage() {
   const bottomRef = useRef<HTMLDivElement>(null);
   const { streaming, send, stop } = useChatStream();
 
+  // 会话侧栏：服务端搜索 + 累加式分页（「加载更多」而非页码）
+  const sessionsQuery = usePaginatedQuery<Session>(
+    useCallback((params) => get(withQuery("/sessions", params), pageSchema(SessionSchema)), []),
+    { pageSize: 30, append: true },
+  );
+  const sessions = sessionsQuery.items;
+  const setSessions = sessionsQuery.setItems;
+  const refreshSessions = sessionsQuery.refresh;
+
+  // loadOlder 的响应落地前用于确认会话未切换
+  const activeIdRef = useRef<string | null>(null);
+  activeIdRef.current = activeId;
+
   useEffect(() => {
     get("/meta/version", VersionInfoSchema)
       .then((r) => setAppVersion(r.version))
       .catch(() => setAppVersion(""));
   }, []);
 
-  const refreshSessions = useCallback(() => {
-    get("/sessions", z.array(SessionSchema))
-      .then(setSessions)
-      .catch((err) => console.error("sessions fetch failed", err));
-  }, []);
-
-  useEffect(() => {
-    refreshSessions();
-  }, [refreshSessions]);
-
-  // 选中会话时加载历史消息
+  // 选中会话时加载最新一页历史消息（page=1）
   useEffect(() => {
     if (!activeId) {
       setMessages([]);
+      setHistoryPage(1);
+      setHasOlder(false);
       return;
     }
     // 刚新建会话并首次提问：assistant 尚未落库（服务端先以 streaming 态写入），
@@ -77,24 +109,16 @@ export function ChatPage() {
     if (turnSessionRef.current === activeId && turnVisibleRef.current) return;
     turnVisibleRef.current = false; // 将用服务端历史替换当前列表
     let cancelled = false;
-    get(`/sessions/${activeId}/messages`, z.array(MessageSchema))
-      .then((rows) => {
+    get(
+      withQuery(`/sessions/${activeId}/messages`, { page: 1, page_size: MESSAGE_PAGE_SIZE }),
+      pageSchema(MessageSchema),
+    )
+      .then((page) => {
         if (cancelled) return;
-        setMessages(
-          rows
-            .filter((m) => m.status !== "streaming")
-            .map((m) => ({
-              id: m.id,
-              serverId: m.id,
-              role: m.role,
-              content: m.content,
-              status: m.status,
-              citations: (m.citations ?? undefined) as DisplayMessage["citations"],
-              error: m.error,
-              traceId: m.trace_id,
-              feedback: m.feedback ?? null,
-            })),
-        );
+        // 服务端按 created_at 倒序返回（page=1 为最新一页）：需反转成正序再展示
+        setMessages(toDisplayMessages(page.items).reverse());
+        setHistoryPage(1);
+        setHasOlder(page.pages > 1);
       })
       .catch((err) => {
         if (!cancelled) console.error("messages fetch failed", err);
@@ -103,6 +127,29 @@ export function ChatPage() {
       cancelled = true;
     };
   }, [activeId]);
+
+  /** 加载更早的历史消息：取下一页（更早），反转后 prepend —— 只动头部，不碰流式追加的尾部。 */
+  const loadOlder = useCallback(async () => {
+    const sessionId = activeId;
+    if (!sessionId || loadingOlder || !hasOlder) return;
+    setLoadingOlder(true);
+    try {
+      const next = historyPage + 1;
+      const page = await get(
+        withQuery(`/sessions/${sessionId}/messages`, { page: next, page_size: MESSAGE_PAGE_SIZE }),
+        pageSchema(MessageSchema),
+      );
+      // 响应期间用户可能已切换会话：丢弃过期结果
+      if (activeIdRef.current !== sessionId) return;
+      setMessages((prev) => [...toDisplayMessages(page.items).reverse(), ...prev]);
+      setHistoryPage(next);
+      setHasOlder(next < page.pages);
+    } catch (err) {
+      console.error("older messages fetch failed", err);
+    } finally {
+      setLoadingOlder(false);
+    }
+  }, [activeId, historyPage, hasOlder, loadingOlder]);
 
   useEffect(() => {
     bottomRef.current?.scrollIntoView({ behavior: "smooth" });
@@ -324,23 +371,13 @@ export function ChatPage() {
           onSelect={setActiveId}
           onCreate={() => void createSession()}
           onDelete={(id) => void deleteSession(id)}
+          query={sessionsQuery.query}
+          onQueryChange={sessionsQuery.setQuery}
+          hasMore={sessionsQuery.page < sessionsQuery.pages}
+          loadingMore={sessionsQuery.loading}
+          onLoadMore={() => sessionsQuery.setPage(sessionsQuery.page + 1)}
+          error={sessionsQuery.error}
         />
-        <div className="mt-auto flex items-center justify-between border-t border-white/5 px-1 pt-3">
-          <div className="text-xs text-slate-400">
-            {user?.display_name || user?.username}
-            <div className="mt-1">
-              <QuotaBadge refreshKey={quotaRefreshKey} />
-            </div>
-          </div>
-          <button
-            type="button"
-            onClick={logout}
-            aria-label="退出登录"
-            className="rounded-md p-1.5 text-slate-400 hover:bg-white/10 hover:text-white cursor-pointer"
-          >
-            <LogOut size={16} />
-          </button>
-        </div>
       </aside>
 
       {/* 对话主区 */}
@@ -350,6 +387,7 @@ export function ChatPage() {
           <div className="flex items-center gap-2">
             <ThemeToggle />
             <span className="flex items-center gap-1.5 rounded-full border border-emerald-500/30 bg-emerald-500/10 px-2.5 py-1 text-xs font-medium text-emerald-400"><span className="h-1.5 w-1.5 rounded-full bg-emerald-400" />服务就绪</span>
+            <UserMenu user={user} onLogout={logout} quotaRefreshKey={quotaRefreshKey} />
           </div>
         </header>
         <div className="flex-1 overflow-y-auto scrollbar-thin px-4 py-6 sm:px-6">
@@ -376,6 +414,15 @@ export function ChatPage() {
                     </div>
                   ))}
                 </div>
+              </div>
+            )}
+            {hasOlder && (
+              <div className="flex justify-center">
+                {/* 流式作答中禁用：避免历史分页与乐观流式消息交叉 */}
+                <Button variant="outline" size="sm" disabled={loadingOlder || streaming} onClick={() => void loadOlder()}>
+                  {loadingOlder ? <Loader2 size={14} className="animate-spin" /> : <History size={14} />}
+                  {loadingOlder ? "加载中…" : "加载更早的消息"}
+                </Button>
               </div>
             )}
             {messages.map((m, idx) => (
