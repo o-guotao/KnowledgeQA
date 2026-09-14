@@ -1,6 +1,7 @@
 import { BrowserRouter, Navigate, Route, Routes } from "react-router-dom";
 
 import { AuthProvider, useAuth } from "./auth/AuthContext";
+import { IcpFooter } from "./components/IcpFooter";
 import { AdminPage } from "./pages/AdminPage";
 import { ChangelogPage } from "./pages/ChangelogPage";
 import { ChatPage } from "./pages/ChatPage";
@@ -37,6 +38,7 @@ export default function App() {
           <Route path="/changelog" element={<RequireAuth><ChangelogPage /></RequireAuth>} />
           <Route path="*" element={<Navigate to="/" replace />} />
         </Routes>
+        <IcpFooter />
       </BrowserRouter>
     </AuthProvider>
   );
