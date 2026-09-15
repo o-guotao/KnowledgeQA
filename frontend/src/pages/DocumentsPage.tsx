@@ -136,6 +136,13 @@ export function DocumentsPage() {
     refreshFolders();
   }, [docsQuery.refresh, refreshStats, refreshFolders]); // eslint-disable-line react-hooks/exhaustive-deps
 
+  // 首次挂载拉取顶部计数与文件夹 chips（文档列表由 usePaginatedQuery 自行加载；
+  // stats/folders 不挂载拉取会一直停留在 null/[]，表现为「全部 0」且无文件夹按钮）
+  useEffect(() => {
+    refreshStats();
+    refreshFolders();
+  }, [refreshStats, refreshFolders]);
+
   /** 共享/取消共享到团队空间（owner 或 admin） */
   const toggleShare = async (doc: KnowledgeDocument) => {
     setShareTogglingId(doc.id);

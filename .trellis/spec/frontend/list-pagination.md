@@ -59,6 +59,11 @@ Returned `setItems` exists for optimistic updates (remove a deleted row locally,
 - **"Select all" means the current page.** The selection `Set` itself persists across pages
   (batch delete works on ids, not on the visible list).
 - **`enabled`** gates a list that is not visible yet (e.g. `enabled: tab === "team"`).
+- **Auxiliary data needs its own mount load.** Counters/enumerations (`/documents/stats`,
+  `/documents/folders`) that are only called from a manual `refresh()` never load on first
+  render — they sit at their initial value forever (chips stuck at 0, filter buttons
+  missing) while the paged list itself works (the hook self-fetches). When replacing a
+  component's state block wholesale, audit every `useEffect` in the replaced region.
 - Empty states distinguish "no data" from "no match": check `query !== ""` / active filters
   before showing onboarding copy.
 
