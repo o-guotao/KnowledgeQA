@@ -1,7 +1,16 @@
+# 统一日志轮转：json-file 驱动默认无上限，长期运行会持续吃盘
+# （后端每请求一行 JSON + nginx 访问日志），这里限制单文件 10MB、保留 3 个。
+x-logging: &default-logging
+  driver: json-file
+  options:
+    max-size: "10m"
+    max-file: "3"
+
 services:
   db:
     image: pgvector/pgvector:pg16
     container_name: web-agent-db
+    logging: *default-logging
     environment:
       POSTGRES_USER: ${POSTGRES_USER:-webagent}
       POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-webagent_secret}
@@ -21,6 +30,7 @@ services:
     image: minio/minio:latest
     container_name: web-agent-minio
     command: server /data --console-address ":9001"
+    logging: *default-logging
     environment:
       MINIO_ROOT_USER: ${MINIO_ROOT_USER:-minioadmin}
       MINIO_ROOT_PASSWORD: ${MINIO_ROOT_PASSWORD:-minioadmin123}
@@ -37,6 +47,7 @@ services:
   minio-init:
     image: minio/mc:latest
     container_name: web-agent-minio-init
+    logging: *default-logging
     depends_on:
       minio:
         condition: service_healthy
@@ -55,6 +66,7 @@ services:
     build: ./backend
     image: knowledgeqa-backend:${IMAGE_TAG:-current}
     container_name: web-agent-backend
+    logging: *default-logging
     command: >
       sh -c "alembic upgrade head &&
              python -m scripts.seed &&
@@ -94,6 +106,7 @@ services:
   worker:
     image: knowledgeqa-backend:${IMAGE_TAG:-current}
     container_name: web-agent-worker
+    logging: *default-logging
     command: python -m worker.main
     env_file:
       - .env
@@ -117,6 +130,7 @@ services:
     build: ./frontend
     image: knowledgeqa-frontend:${IMAGE_TAG:-current}
     container_name: web-agent-frontend
+    logging: *default-logging
     mem_limit: 128m
     ports:
       - "5173:80"
@@ -133,6 +147,7 @@ services:
     image: nginx:1.27-alpine
     container_name: web-agent-nginx
     profiles: ["production"]
+    logging: *default-logging
     ports:
       - "80:80"
       - "443:443"
@@ -152,6 +167,7 @@ services:
     image: nginx:1.27-alpine
     container_name: web-agent-nginx-edgeone
     profiles: ["edgeone"]
+    logging: *default-logging
     ports:
       - "80:80"
       - "443:443"
@@ -169,6 +185,7 @@ services:
     image: nginx:1.27-alpine
     container_name: web-agent-nginx-cdn
     profiles: ["cdn"]
+    logging: *default-logging
     ports:
       - "80:80"
     volumes:

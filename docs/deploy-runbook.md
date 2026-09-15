@@ -116,6 +116,21 @@ docker compose down                # 停止（数据保留在 volume）
 - 更新代码：`git pull && docker compose --profile cdn up -d --build`
 - 备份：见 `docs/backup-restore.md`（pg_dump + MinIO 数据 + certbot 证书）
 
+**日志来源与轮转**（排查问题必读）：
+
+- 容器日志 = 容器内进程的 **stdout/stderr**，由 Docker `json-file` 驱动采集，落在**宿主机**
+  `/var/lib/docker/containers/<容器ID>/<容器ID>-json.log`
+  （查路径：`docker inspect --format='{{.LogPath}}' web-agent-backend`）。
+- 各容器写入方：backend / worker 经 `app/logging_config.py` 输出 **JSON 单行**（含 `traceId`，
+  worker 在 `worker/main.py` 同样 `configure_logging()`）；nginx 官方镜像把
+  `access.log`/`error.log` 软链到 stdout/stderr；postgres / minio 默认输出到 stderr。
+- 项目**不写任何日志文件**、没有挂载日志卷 → 容器被删即日志丢失，需长期留存要接日志收集器。
+- `uvicorn.access` 被压到 WARNING（`logging_config.py`），默认**没有逐请求访问日志**；
+  要看请求请查 nginx 的 access log。
+- 跨容器串联一次上传/问答：`docker compose logs backend worker | grep <traceId>`。
+- **轮转**：compose 用 `x-logging` 锚点统一 `max-size=10m / max-file=3`（单容器约 30MB 上限），
+  避免 json-file 无上限吃满磁盘。
+
 ## 4. 故障排查
 
 | 现象 | 排查 |
