@@ -4,7 +4,7 @@ from datetime import datetime, timedelta, timezone
 
 import bcrypt
 import jwt
-from fastapi import Depends
+from fastapi import Depends, Request
 from fastapi.security import HTTPAuthorizationCredentials, HTTPBearer
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
@@ -16,6 +16,8 @@ from app.models.user import User
 
 ALGORITHM = "HS256"
 bearer = HTTPBearer(auto_error=False)
+# HttpOnly Cookie 名：浏览器自动携带，JS 不可读，避免 localStorage 被 XSS 窃取
+AUTH_COOKIE_NAME = "web_agent_token"
 
 
 def hash_password(plain: str) -> str:
@@ -36,13 +38,16 @@ def create_access_token(user_id: uuid.UUID) -> str:
 
 
 async def get_current_user(
+    request: Request,
     credentials: HTTPAuthorizationCredentials | None = Depends(bearer),
     db: AsyncSession = Depends(get_db),
 ) -> User:
-    if credentials is None:
+    # 优先 Bearer 头（脚本/跨域部署兼容），否则回退 HttpOnly Cookie（浏览器前端）
+    token = credentials.credentials if credentials is not None else request.cookies.get(AUTH_COOKIE_NAME)
+    if not token:
         raise AppError("UNAUTHORIZED", "缺少登录凭证", 401)
     try:
-        payload = jwt.decode(credentials.credentials, get_settings().jwt_secret, algorithms=[ALGORITHM])
+        payload = jwt.decode(token, get_settings().jwt_secret, algorithms=[ALGORITHM])
         user_id = uuid.UUID(payload["sub"])
     except (jwt.PyJWTError, KeyError, ValueError):
         raise AppError("UNAUTHORIZED", "凭证无效或已过期", 401) from None

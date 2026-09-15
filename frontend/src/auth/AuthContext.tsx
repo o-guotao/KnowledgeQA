@@ -1,12 +1,14 @@
 import { createContext, useCallback, useContext, useEffect, useMemo, useState } from "react";
 import type { ReactNode } from "react";
+import { z } from "zod";
 
-import { clearToken, getToken, post, setToken } from "../api/client";
-import { TokenResponseSchema, type User } from "../api/schemas";
+import { get, post, setToken } from "../api/client";
+import { TokenResponseSchema, UserSchema, type User } from "../api/schemas";
 
 interface AuthState {
   user: User | null;
-  token: string | null;
+  /** 首次挂载正在用 Cookie 调 /auth/me 恢复会话 */
+  loading: boolean;
   login: (username: string, password: string) => Promise<void>;
   logout: () => void;
 }
@@ -15,28 +17,40 @@ const AuthContext = createContext<AuthState | null>(null);
 
 export function AuthProvider({ children }: { children: ReactNode }) {
   const [user, setUser] = useState<User | null>(null);
-  const [token, setTokenState] = useState<string | null>(() => getToken());
+  const [loading, setLoading] = useState(true);
 
+  // 刷新后内存 token 已丢失：凭 HttpOnly Cookie 调 /auth/me 恢复会话
   useEffect(() => {
-    if (!token) setUser(null);
-  }, [token]);
+    get("/auth/me", UserSchema)
+      .then(setUser)
+      .catch(() => setUser(null))
+      .finally(() => setLoading(false));
+  }, []);
+
+  // 任意请求 401 时清空用户态（路由守卫据此跳回登录页）
+  useEffect(() => {
+    const onUnauthorized = () => setUser(null);
+    window.addEventListener("auth:unauthorized", onUnauthorized);
+    return () => window.removeEventListener("auth:unauthorized", onUnauthorized);
+  }, []);
 
   const login = useCallback(async (username: string, password: string) => {
     const res = await post("/auth/login", { username, password }, TokenResponseSchema);
+    // 登录响应已写入 HttpOnly Cookie；内存 token 仅供跨域 Bearer 场景使用
     setToken(res.access_token);
-    setTokenState(res.access_token);
     setUser(res.user);
   }, []);
 
   const logout = useCallback(() => {
-    clearToken();
-    setTokenState(null);
+    // HttpOnly Cookie 只能由服务端清除；失败也照常清空本地态
+    void post("/auth/logout", {}, z.unknown()).catch(() => undefined);
+    setToken(null);
     setUser(null);
   }, []);
 
   const value = useMemo(
-    () => ({ user, token, login, logout }),
-    [user, token, login, logout],
+    () => ({ user, loading, login, logout }),
+    [user, loading, login, logout],
   );
   return <AuthContext.Provider value={value}>{children}</AuthContext.Provider>;
 }

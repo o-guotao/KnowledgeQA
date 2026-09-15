@@ -6,6 +6,7 @@ from app.config import get_settings
 from app.core.errors import register_error_handlers
 from app.core.tracing import TraceMiddleware
 from app.logging_config import configure_logging
+from app.version import get_version
 
 configure_logging()
 
@@ -13,7 +14,7 @@ settings = get_settings()
 
 app = FastAPI(
     title="Web Agent - 内部知识问答",
-    version="0.1.0",
+    version=get_version(),  # 单一来源：根 VERSION 文件
     description="带权限的内部知识问答 Agent：JWT 鉴权、SSE 流式、RAG、任务表、配额与费用。",
 )
 

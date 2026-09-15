@@ -61,11 +61,64 @@ CREATE UNIQUE INDEX ix_documents_user_content_hash
 
 ## Other endpoints
 
-- `GET /documents` — owner list, newest first.
+- `GET /documents` — owner list. Paged envelope (`Page[DocumentOut]`), `folder` exact filter
+  (unchanged), plus `q` matching `filename` **or** `tags` (via `json_text_search`, see
+  `list-pagination.md`), sorted `folder ↑, created_at ↓, id ↓`. The `id` tiebreaker is
+  required — batch uploads share a `created_at` second and paging would otherwise repeat or
+  skip rows.
+- `GET /documents/stats` — `DocumentStats` counters for the list header chips
+  (`total/ready/processing/failed/no_text`), computed with one `GROUP BY status`. Global
+  scope: deliberately ignores `q`/`folder` (the filtered count is the envelope's `total`).
+  `processing` = `uploaded + processing`. `stale` is **not** here — it needs the per-doc
+  settings comparison in `doc_sync.stale_reasons`, so it stays a per-row badge.
+  Must stay declared before `/documents/{document_id}`.
+- `GET /documents/folders` — folder names for the filter chips; deliberately **not** paged.
 - `GET /documents/{id}` — owner fetch.
 - `GET /chunks/{chunk_id}` — citation jump: returns chunk text + owning doc name + total chunk count.
 - `DELETE /documents/{id}` — 204. Cancels stale `ingest_document` tasks for that doc, deletes the
   row (chunks + vectors cascade via FK `ondelete=CASCADE`), then best-effort MinIO delete.
+- `POST /documents/{id}/content` — in-place content update (multipart `file`). Reuses the upload
+  validation pipeline. Same hash as self → 200 `{updated:false}` idempotent no-op; same hash as
+  another owned doc → 409 `DUPLICATE_DOCUMENT`; `uploaded`/`processing` status → 409
+  `DOCUMENT_PROCESSING`. New content: new object key written (old object deleted best-effort),
+  `version += 1`, ingest task enqueued. Image-only PDF result → `no_text` + old chunks deleted
+  inline in the same transaction (they must stop being recallable immediately).
+- `POST /documents/{id}/reingest` — re-chunk stored bytes with current settings (`no_text` → 400
+  `NOT_INGESTABLE`; processing → 409). Syncs `chunk_size`/`chunk_overlap` to current globals so the
+  post-ingest signature matches current config; `version` unchanged.
+
+## Team space (visibility)
+
+- `documents.visibility`: `private` (default, migration 0013 backfills all existing rows private) | `team`.
+- Read authorization (`_can_read`): owner OR admin OR `visibility == "team"`. Others' private docs
+  still 404 (no existence leak). Applied to `GET /documents/{id}`, `GET .../file`,
+  `GET /chunks/{chunk_id}`.
+- Write authorization (`_can_write`): owner; admin only for team docs (unshare/delete). `PATCH` with
+  non-visibility fields by a non-owner admin → 403 `FORBIDDEN`.
+- `GET /documents/team` (declared BEFORE `/documents/{document_id}`): team docs joined with
+  owner `display_name` → `owner_name`; any logged-in user. Paged envelope; `q` matches
+  `filename`, `tags` or the owner's `display_name` ("find docs shared by X"). The count runs
+  through the same join subquery, so `total` always matches the filtered rows.
+- Retrieval visibility is one predicate: `(Chunk.user_id == :uid) OR (Document.visibility == 'team')`
+  (always AND `status == 'ready'`), applied uniformly in vector recall (pg + sqlite), keyword DB
+  recall (tsvector + LIKE), and BM25 (`team_flags` in the in-memory index).
+- BM25 fingerprint is `(child_count, max(created_at), team_child_count)` — the third term makes
+  share/unshare trigger a lazy rebuild on the next query.
+- Upload accepts `visibility` form field (`private` default; invalid → 400 `BAD_VISIBILITY`).
+- Batch delete stays owner-only; admin team management goes through single `DELETE`.
+
+## Versioning & stale detection
+
+- Columns: `version` (content version, +1 only on content change), `ingest_signature`
+  (`{chunk_strategy}|{chunk_size}|{chunk_overlap}|{embedding_backend}|{embedding_model}` written by
+  the worker on every successful ingest; `""` = legacy unrecorded), `ingested_at`.
+  Migration `0012_document_version_ingest` backfills `ready` rows from env so they don't false-positive.
+- `stale` is **computed, never stored**: `services/doc_sync.py::stale_reasons` compares the stored
+  signature against current settings per request. Only `status == "ready"` docs with a non-empty
+  signature participate. `GET` endpoints serialize via `_to_out()` which attaches
+  `stale` / `stale_reasons`.
+- Worker `ingest_document` is replay-idempotent (delete-then-insert chunks in one transaction), so
+  both content update and reingest reuse the same `ingest_document` task type — no new task type.
 
 ## Validation & Error Matrix
 

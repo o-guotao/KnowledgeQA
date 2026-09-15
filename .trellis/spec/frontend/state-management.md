@@ -69,6 +69,21 @@ try { await send(...); } finally { if (turnSessionRef.current === sessionId) tur
 
 ---
 
+## Paginated History vs Streaming
+
+Loading older messages must not disturb an in-flight turn. The chat page therefore keeps
+`messages` out of `usePaginatedQuery` and manages paging by hand:
+
+- the `activeId` effect loads **page 1 = newest**, still behind the `turnSessionRef` /
+  `turnVisibleRef` guard above;
+- "load older" **prepends** (`[...older.reverse(), ...prev]`) and never replaces the list,
+  so the streaming tail is untouched;
+- it is disabled while `streaming`, and its response is discarded when `activeId` changed
+  mid-flight (`activeIdRef`).
+
+Everything else (documents, users, eval, sessions sidebar, changelog) uses the shared
+`usePaginatedQuery` hook — see `list-pagination.md`.
+
 ## Common Mistakes
 
 <!-- State management mistakes your team has made -->
@@ -76,3 +91,5 @@ try { await send(...); } finally { if (turnSessionRef.current === sessionId) tur
 - Letting a `useEffect` on `activeId`/route overwrite optimistic messages that are still
   streaming (see Optimistic Streaming vs History Reload above). Always gate the fetch on
   "no local in-flight turn for this session" and guard stale responses with a cancelled flag.
+- Deriving counts/aggregates from a paginated `items` array (they now describe one page
+  only) or re-rendering a paged list from a fetch response in `append` mode (duplicates).

@@ -1,0 +1,2 @@
+{"file": ".trellis/spec/backend/documents-api.md", "reason": "Document endpoints contract, status machine, route ordering and error semantics the team-space endpoints must follow"}
+{"file": ".trellis/tasks/09-11-kb-team-space/design.md", "reason": "Reviewed technical design: visibility column, unified recall predicate, authorization matrix"}

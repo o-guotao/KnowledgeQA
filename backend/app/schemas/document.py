@@ -10,20 +10,36 @@ class DocumentOut(BaseModel):
     content_hash: str | None
     folder: str = ""
     tags: list = []
+    # 可见性：private | team（团队空间）；owner_name 仅团队空间列表填充（ORM 无此列）
+    visibility: str = "private"
+    owner_name: str | None = None
     status: str
     chunk_size: int
     chunk_overlap: int
     chunk_count: int
     error: str | None
+    version: int = 1
+    ingested_at: datetime | None = None
+    # 失效检测：非 ORM 列，由 API 层按「文档签名 vs 当前 settings」计算后填入
+    stale: bool = False
+    stale_reasons: list[str] = []
     created_at: datetime
     updated_at: datetime
 
     model_config = {"from_attributes": True}
 
 
+class ContentUpdateResult(BaseModel):
+    """就地更新响应：updated=false 表示内容 hash 未变（幂等 no-op）。"""
+
+    updated: bool
+    document: DocumentOut
+
+
 class DocumentUpdate(BaseModel):
     folder: str | None = Field(default=None, max_length=128)
     tags: list[str] | None = None
+    visibility: str | None = Field(default=None, pattern="^(private|team)$")
 
 
 class BatchDeleteRequest(BaseModel):

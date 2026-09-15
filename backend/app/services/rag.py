@@ -1,16 +1,18 @@
 """RAG 召回：向量召回 + 关键词混合检索（RRF 融合）+ 可选重排序，按用户隔离。
 
-- postgresql：向量用 pgvector cosine_distance，关键词用 tsvector ts_rank
-- sqlite：向量用 Python 端余弦，关键词用 LIKE 简单匹配（开发降级，生产用 PG）
+- postgresql：向量用 pgvector cosine_distance；sqlite：向量用 Python 端余弦
+- 关键词：默认 BM25（app/services/bm25_index.py，jieba 分词 + Okapi）；
+  依赖缺失或 BM25_ENABLED=false 时回退 tsvector ts_rank（PG）/ LIKE（SQLite）
 - 混合检索（HYBRID_SEARCH_ENABLED）：RRF 融合两路召回，提升专有名词/编号的召回
 - 重排（RERANK_ENABLED）：cross-encoder 精排取 top_k
 """
 import logging
 import math
+import time
 import uuid
 from dataclasses import dataclass
 
-from sqlalchemy import select, text
+from sqlalchemy import or_, select, text
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.config import get_settings
@@ -18,6 +20,12 @@ from app.models.chunk import Chunk
 from app.models.document import Document
 
 logger = logging.getLogger(__name__)
+
+
+def _visible_to(user_id: uuid.UUID):
+    """召回可见性：本人全部文档 + 全员团队空间文档（需与 Chunk join Document 后使用，
+    并恒与 Document.status == 'ready' 组合）。"""
+    return or_(Chunk.user_id == user_id, Document.visibility == "team")
 
 
 @dataclass
@@ -82,7 +90,7 @@ async def _vector_recall(
         stmt = (
             select(Chunk, Document.filename)
             .join(Document, Chunk.document_id == Document.id)
-            .where(Chunk.user_id == user_id, Document.status == "ready", Chunk.block_type == "child")
+            .where(_visible_to(user_id), Document.status == "ready", Chunk.block_type == "child")
         )
         rows = (await db.execute(stmt)).all()
         scored = [
@@ -98,7 +106,7 @@ async def _vector_recall(
     stmt = (
         select(Chunk, Document.filename, distance)
         .join(Document, Chunk.document_id == Document.id)
-        .where(Chunk.user_id == user_id, Document.status == "ready", Chunk.block_type == "child")
+        .where(_visible_to(user_id), Document.status == "ready", Chunk.block_type == "child")
         .order_by(distance)
         .limit(limit)
     )
@@ -117,10 +125,57 @@ def _keywords(query: str) -> list[str]:
     return [t for t in tokens if len(t) >= 2][:8]
 
 
+async def _bm25_recall(
+    db: AsyncSession, user_id: uuid.UUID, query_text: str, limit: int
+) -> list[RetrievedChunk] | None:
+    """BM25 召回：索引不可用返回 None（走数据库回退），无命中返回 []。"""
+    from app.services import bm25_index
+
+    hits = await bm25_index.search(db, user_id, query_text, limit)
+    if hits is None or not hits:
+        return hits
+    ids = [cid for cid, _ in hits]
+    score_of = dict(hits)
+    # 回填内容与文档名；再次按 user/status 过滤（SQL 侧兜底权限，索引内过滤为性能优化）
+    rows = (
+        await db.execute(
+            select(Chunk, Document.filename)
+            .join(Document, Chunk.document_id == Document.id)
+            .where(
+                Chunk.id.in_(ids),
+                _visible_to(user_id),
+                Document.status == "ready",
+                Chunk.block_type == "child",
+            )
+        )
+    ).all()
+    by_id = {c.id: (c, fn) for c, fn in rows}
+    return [
+        RetrievedChunk(cid, by_id[cid][0].document_id, by_id[cid][1], by_id[cid][0].content, score_of[cid])
+        for cid in ids
+        if cid in by_id
+    ]
+
+
 async def _keyword_recall(
     db: AsyncSession, user_id: uuid.UUID, query_text: str, limit: int
 ) -> list[RetrievedChunk]:
-    """关键词召回。Postgres 用 tsvector 全文检索；SQLite 用 LIKE 退化匹配。"""
+    """关键词召回：默认 BM25；不可用/异常时回退 tsvector（PG）/ LIKE（SQLite）。"""
+    settings = get_settings()
+    if settings.bm25_enabled:
+        try:
+            results = await _bm25_recall(db, user_id, query_text, limit)
+            if results is not None:
+                return results
+        except Exception as exc:
+            logger.warning("bm25 recall degraded: %s", exc, extra={"event": "bm25_recall_degraded"})
+    return await _keyword_recall_db(db, user_id, query_text, limit)
+
+
+async def _keyword_recall_db(
+    db: AsyncSession, user_id: uuid.UUID, query_text: str, limit: int
+) -> list[RetrievedChunk]:
+    """数据库关键词召回（回退路径）。Postgres 用 tsvector 全文检索；SQLite 用 LIKE 退化匹配。"""
     settings = get_settings()
     kws = _keywords(query_text)
     if not kws:
@@ -139,7 +194,8 @@ async def _keyword_recall(
                         SELECT c.id, c.document_id, c.content, d.filename,
                                ({' + '.join(f"(content LIKE :kw{i})" for i in range(len(kws)))}) AS hits
                         FROM chunks c JOIN documents d ON c.document_id = d.id
-                        WHERE c.user_id = :uid AND d.status = 'ready' AND c.block_type = 'child'
+                        WHERE (c.user_id = :uid OR d.visibility = 'team')
+                          AND d.status = 'ready' AND c.block_type = 'child'
                           AND ({like_clauses})
                         ORDER BY hits DESC, c.created_at DESC
                         LIMIT :lim
@@ -161,7 +217,8 @@ async def _keyword_recall(
                     SELECT c.id, c.document_id, c.content, d.filename,
                            ts_rank(c.content_tsv, plainto_tsquery('simple', :q)) AS rank
                     FROM chunks c JOIN documents d ON c.document_id = d.id
-                    WHERE c.user_id = :uid AND d.status = 'ready' AND c.block_type = 'child'
+                    WHERE (c.user_id = :uid OR d.visibility = 'team')
+                      AND d.status = 'ready' AND c.block_type = 'child'
                       AND c.content_tsv @@ plainto_tsquery('simple', :q)
                     ORDER BY rank DESC
                     LIMIT :lim
@@ -208,12 +265,18 @@ async def retrieve(
     query_embedding: list[float],
     top_k: int | None = None,
     query_text: str | None = None,
+    timing: dict | None = None,
 ) -> list[RetrievedChunk]:
-    """向量召回 + 混合检索 + 可选重排，最终返回 top_k。"""
+    """向量召回 + 混合检索 + 可选重排，最终返回 top_k。
+
+    timing 传入 dict 时回填分阶段耗时（毫秒，并发安全）：
+    recall_ms=向量+关键词+RRF（不含 embed 与重排）、rerank_ms=重排（未开启不写入）。
+    """
     settings = get_settings()
     k = top_k or settings.rag_top_k
     candidate_k = k * settings.rerank_candidate_multiplier if settings.rerank_enabled else k
 
+    t0 = time.perf_counter()
     vector_results = await _vector_recall(db, user_id, query_embedding, candidate_k)
 
     if settings.hybrid_search_enabled and query_text:
@@ -221,11 +284,16 @@ async def retrieve(
         candidates = _rrf_fuse(vector_results, keyword_results, candidate_k)
     else:
         candidates = vector_results
+    if timing is not None:
+        timing["recall_ms"] = round((time.perf_counter() - t0) * 1000, 1)
 
     if settings.rerank_enabled and query_text:
         from app.services.rerank import rerank
 
+        t1 = time.perf_counter()
         candidates = await rerank(query_text, candidates, k)
+        if timing is not None:
+            timing["rerank_ms"] = round((time.perf_counter() - t1) * 1000, 1)
     candidates = candidates[:k]
     # 父子块上下文解析：child 命中后取 parent 内容用于 prompt
     candidates = await _resolve_parent_context(db, candidates)

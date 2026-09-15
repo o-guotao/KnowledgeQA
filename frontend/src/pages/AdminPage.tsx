@@ -1,14 +1,15 @@
-import { ArrowLeft, Cpu, Loader2, Pencil, Plus, Save, Trash2, TrendingUp, Users, X } from "lucide-react";
-import { useCallback, useEffect, useMemo, useState } from "react";
+import { ArrowLeft, Cpu, FlaskConical, Loader2, Pencil, Plus, Save, Trash2, TrendingUp, Users, X } from "lucide-react";
+import { lazy, Suspense, useCallback, useEffect, useMemo, useState } from "react";
 import { useNavigate } from "react-router-dom";
 import { z } from "zod";
 
-import { del, get, patch, post } from "../api/client";
+import { del, get, patch, post, withQuery } from "../api/client";
 import {
   AdminUserSchema,
   DailyUsageSchema,
   ModelUsageSchema,
   UserUsageSchema,
+  pageSchema,
   type AdminUser,
   type DailyUsage,
   type ModelUsage,
@@ -17,35 +18,64 @@ import {
 import { Button } from "../components/ui/button";
 import { Card, CardContent, CardHeader, CardTitle } from "../components/ui/card";
 import { ConfirmDialog } from "../components/ConfirmDialog";
+import { Pagination } from "../components/ui/pagination";
+import { SearchInput } from "../components/ui/search-input";
+import { ThemeToggle } from "../components/ThemeToggle";
 import { Input } from "../components/ui/input";
+import { usePaginatedQuery } from "../hooks/usePaginatedQuery";
 
 const fmtTokens = (n: number) => (n >= 10000 ? `${(n / 10000).toFixed(1)}万` : String(n));
 const fmtCost = (n: number) => `¥${n.toFixed(4)}`;
+
+// 评测中心（含 recharts）懒加载：独立 chunk，不进主包首屏
+const EvalCenterTab = lazy(() => import("./admin/EvalCenterTab"));
 
 type Draft = { username: string; password: string; display_name: string; role: string; limit_tokens: string };
 const emptyDraft = (): Draft => ({ username: "", password: "", display_name: "", role: "user", limit_tokens: "" });
 
 export function AdminPage() {
   const navigate = useNavigate();
-  const [users, setUsers] = useState<AdminUser[]>([]);
+  const [tab, setTab] = useState<"usage" | "eval">("usage");
   const [daily, setDaily] = useState<DailyUsage[]>([]);
-  const [byModel, setByModel] = useState<ModelUsage[]>([]);
-  const [byUser, setByUser] = useState<UserUsage[]>([]);
+  const [roleFilter, setRoleFilter] = useState<string>("");
   const [error, setError] = useState<string | null>(null);
   const [message, setMessage] = useState<string | null>(null);
   const [editingId, setEditingId] = useState<string | null>(null);
   const [draft, setDraft] = useState<Draft>(emptyDraft);
   const [saving, setSaving] = useState(false);
 
-  const refresh = useCallback(() => {
-    get("/admin/users", z.array(AdminUserSchema))
-      .then(setUsers)
-      .catch((e) => setError(e instanceof Error ? e.message : "加载用户失败"));
+  const usersQuery = usePaginatedQuery<AdminUser>(
+    useCallback(
+      (params) => get(withQuery("/admin/users", { ...params, role: roleFilter }), pageSchema(AdminUserSchema)),
+      [roleFilter],
+    ),
+    { pageSize: 10, extraParams: { role: roleFilter } },
+  );
+  const byUserQuery = usePaginatedQuery<UserUsage>(
+    useCallback(
+      (params) => get(withQuery("/admin/usage/by-user", { ...params, days: 30 }), pageSchema(UserUsageSchema)),
+      [],
+    ),
+    { pageSize: 10 },
+  );
+  const byModelQuery = usePaginatedQuery<ModelUsage>(
+    useCallback(
+      (params) => get(withQuery("/admin/usage/by-model", { ...params, days: 30 }), pageSchema(ModelUsageSchema)),
+      [],
+    ),
+    { pageSize: 10 },
+  );
+
+  // 按日用量是时间序列（图表数据源），保留 days 窗口、不做分页（见任务 prd 例外项）
+  const refreshDaily = useCallback(() => {
     get("/admin/usage/daily?days=30", z.array(DailyUsageSchema)).then(setDaily).catch(() => {});
-    get("/admin/usage/by-model?days=30", z.array(ModelUsageSchema)).then(setByModel).catch(() => {});
-    get("/admin/usage/by-user?days=30", z.array(UserUsageSchema)).then(setByUser).catch(() => {});
   }, []);
-  useEffect(() => { refresh(); }, [refresh]);
+  useEffect(() => { refreshDaily(); }, [refreshDaily]);
+
+  const users = usersQuery.items;
+  const byUser = byUserQuery.items;
+  const byModel = byModelQuery.items;
+  const refresh = usersQuery.refresh;
 
   const summary = useMemo(
     () => ({
@@ -106,15 +136,43 @@ export function AdminPage() {
 
   return (
     <main className="min-h-screen bg-gradient-to-b from-theme-bg via-theme-bg to-theme-deep px-4 py-8 sm:px-8">
-      <div className="mx-auto max-w-6xl space-y-6">
-        <header className="flex items-center gap-3">
-          <Button variant="ghost" size="icon" aria-label="返回问答" onClick={() => navigate("/")}><ArrowLeft size={18} /></Button>
-          <div><p className="text-sm font-medium text-brand">管理后台</p><h1 className="text-2xl font-semibold tracking-tight text-theme-text">用量与用户管理</h1></div>
+      <div className="mx-auto max-w-[1400px] space-y-6">
+        <header className="flex items-center justify-between gap-3">
+          <div className="flex items-center gap-3">
+            <Button variant="ghost" size="icon" aria-label="返回问答" onClick={() => navigate("/")}><ArrowLeft size={18} /></Button>
+            <div><p className="text-sm font-medium text-brand">管理后台</p><h1 className="text-2xl font-semibold tracking-tight text-theme-text">用量与用户管理</h1></div>
+          </div>
+          <ThemeToggle />
         </header>
         {(message || error) && (
           <div role="status" className={`rounded-lg border px-4 py-3 text-sm ${error ? "border-red-200 bg-red-50 text-red-700" : "border-emerald-200 bg-emerald-50 text-emerald-700"}`}>{error ?? message}</div>
         )}
 
+        {/* Tab：用量与用户 | 评测中心 */}
+        <div className="flex gap-1 border-b border-theme-line">
+          {([["usage", "用量与用户", Users], ["eval", "评测中心", FlaskConical]] as const).map(([key, label, Icon]) => (
+            <button
+              key={key}
+              type="button"
+              onClick={() => setTab(key)}
+              className={`-mb-px flex cursor-pointer items-center gap-1.5 border-b-2 px-4 py-2 text-sm transition-colors ${
+                tab === key ? "border-brand font-medium text-brand" : "border-transparent text-theme-sub hover:text-theme-text"
+              }`}
+            >
+              <Icon size={15} />
+              {label}
+            </button>
+          ))}
+        </div>
+
+        {tab === "eval" && (
+          <Suspense fallback={<div className="flex justify-center py-16"><Loader2 className="animate-spin text-theme-sub" size={22} /></div>}>
+            <EvalCenterTab />
+          </Suspense>
+        )}
+
+        {tab === "usage" && (
+        <>
         <section className="grid gap-4 sm:grid-cols-3">
           {[
             { label: "近30天 Tokens", value: fmtTokens(summary.tokens) },
@@ -152,12 +210,15 @@ export function AdminPage() {
 
         <div className="grid gap-6 lg:grid-cols-2">
           <Card>
-            <CardHeader><CardTitle>模型使用分布</CardTitle></CardHeader>
+            <CardHeader className="flex-row items-center justify-between gap-3"><CardTitle>模型使用分布</CardTitle>
+              <SearchInput value={byModelQuery.query} onChange={byModelQuery.setQuery} placeholder="搜索模型名" ariaLabel="搜索模型用量" className="w-40" />
+            </CardHeader>
             <CardContent>
+              {byModelQuery.error && <p className="mb-2 text-sm text-red-400">加载失败：{byModelQuery.error}</p>}
               {byModel.length === 0 ? (
                 <div className="flex flex-col items-center gap-2 py-8 text-center">
                   <Cpu size={22} className="text-theme-sub" />
-                  <p className="text-sm text-theme-sub">暂无模型调用数据</p>
+                  <p className="text-sm text-theme-sub">{byModelQuery.query !== "" ? `没有匹配「${byModelQuery.query}」的模型` : "暂无模型调用数据"}</p>
                 </div>
               ) : (
                 <table className="w-full text-sm">
@@ -165,15 +226,19 @@ export function AdminPage() {
                   <tbody>{byModel.map((m) => <tr key={m.model} className="border-t border-slate-100"><td className="py-2 font-mono text-xs">{m.model}</td><td className="py-2 text-right">{m.calls}</td><td className="py-2 text-right">{fmtTokens(m.total_tokens)}</td><td className="py-2 text-right">{fmtCost(m.cost_cny)}</td></tr>)}</tbody>
                 </table>
               )}
+              <Pagination page={byModelQuery.page} pages={byModelQuery.pages} total={byModelQuery.total} onPageChange={byModelQuery.setPage} disabled={byModelQuery.loading} className="mt-3" />
             </CardContent>
           </Card>
           <Card>
-            <CardHeader><CardTitle>按用户用量</CardTitle></CardHeader>
+            <CardHeader className="flex-row items-center justify-between gap-3"><CardTitle>按用户用量</CardTitle>
+              <SearchInput value={byUserQuery.query} onChange={byUserQuery.setQuery} placeholder="搜索用户名" ariaLabel="搜索用户用量" className="w-40" />
+            </CardHeader>
             <CardContent>
+              {byUserQuery.error && <p className="mb-2 text-sm text-red-400">加载失败：{byUserQuery.error}</p>}
               {byUser.length === 0 ? (
                 <div className="flex flex-col items-center gap-2 py-8 text-center">
                   <Users size={22} className="text-theme-sub" />
-                  <p className="text-sm text-theme-sub">暂无用户用量数据</p>
+                  <p className="text-sm text-theme-sub">{byUserQuery.query !== "" ? `没有匹配「${byUserQuery.query}」的用户` : "暂无用户用量数据"}</p>
                 </div>
               ) : (
                 <table className="w-full text-sm">
@@ -181,6 +246,7 @@ export function AdminPage() {
                   <tbody>{byUser.map((u) => <tr key={u.user_id} className="border-t border-slate-100"><td className="py-2">{u.username}</td><td className="py-2 text-right">{u.calls}</td><td className="py-2 text-right">{fmtTokens(u.total_tokens)}</td><td className="py-2 text-right">{fmtCost(u.cost_cny)}</td></tr>)}</tbody>
                 </table>
               )}
+              <Pagination page={byUserQuery.page} pages={byUserQuery.pages} total={byUserQuery.total} onPageChange={byUserQuery.setPage} disabled={byUserQuery.loading} className="mt-3" />
             </CardContent>
           </Card>
         </div>
@@ -207,11 +273,30 @@ export function AdminPage() {
         </Card>
 
         <section className="space-y-3">
-          <h2 className="flex items-center gap-2 text-lg font-semibold"><Users size={18} />用户列表</h2>
+          <div className="flex flex-wrap items-center justify-between gap-3">
+            <h2 className="flex items-center gap-2 text-lg font-semibold"><Users size={18} />用户列表</h2>
+            <div className="flex flex-wrap items-center gap-2">
+              <SearchInput value={usersQuery.query} onChange={usersQuery.setQuery} placeholder="搜索用户名 / 显示名" ariaLabel="搜索用户" className="w-full sm:w-64" />
+              <select
+                aria-label="按角色筛选"
+                className="h-9 cursor-pointer rounded-lg border border-theme-line bg-theme-input px-3 text-sm text-theme-text"
+                value={roleFilter}
+                onChange={(e) => setRoleFilter(e.target.value)}
+              >
+                <option value="">全部角色</option>
+                <option value="user">user</option>
+                <option value="admin">admin</option>
+              </select>
+            </div>
+          </div>
+          {usersQuery.error && <p className="text-sm text-red-400">用户加载失败：{usersQuery.error}</p>}
           <Card><CardContent className="overflow-x-auto p-0">
             <table className="w-full text-sm">
               <thead><tr className="border-b border-slate-100 text-left text-xs text-theme-sub"><th className="px-4 py-3">用户名</th><th className="px-4 py-3">角色</th><th className="px-4 py-3 text-right">当月Tokens</th><th className="px-4 py-3 text-right">当月成本</th><th className="px-4 py-3 text-right">配额</th><th className="px-4 py-3 text-right">操作</th></tr></thead>
               <tbody>
+                {users.length === 0 && (
+                  <tr><td colSpan={6} className="px-4 py-10 text-center text-theme-sub">{usersQuery.query !== "" || roleFilter !== "" ? "没有匹配的用户" : "暂无用户"}</td></tr>
+                )}
                 {users.map((u) => (
                   <tr key={u.id} className="border-b border-slate-50 last:border-0">
                     <td className="px-4 py-3"><div className="font-medium text-theme-text">{u.username}</div>{u.display_name && <div className="text-xs text-theme-sub">{u.display_name}</div>}</td>
@@ -230,7 +315,10 @@ export function AdminPage() {
               </tbody>
             </table>
           </CardContent></Card>
+          <Pagination page={usersQuery.page} pages={usersQuery.pages} total={usersQuery.total} onPageChange={usersQuery.setPage} disabled={usersQuery.loading} />
         </section>
+        </>
+        )}
 
         <ConfirmDialog
           open={deleteTarget !== null}

@@ -8,6 +8,39 @@
  */
 import { z } from "zod";
 
+// ---------- 通用：列表分页信封 ----------
+/**
+ * 后端所有列表接口统一返回形状（对应 backend/app/schemas/common.py 的 Page[T]）。
+ * 用法：`get("/documents", pageSchema(DocumentSchema))`。
+ */
+export function pageSchema<T extends z.ZodTypeAny>(item: T) {
+  return z.object({
+    items: z.array(item),
+    total: z.number().int().nonnegative(),
+    page: z.number().int().positive(),
+    page_size: z.number().int().positive(),
+    pages: z.number().int().nonnegative(),
+  });
+}
+
+export type PageResult<T> = {
+  items: T[];
+  total: number;
+  page: number;
+  page_size: number;
+  pages: number;
+};
+
+/** 文档列表顶部计数（全局口径，不随 q/folder 变化） */
+export const DocumentStatsSchema = z.object({
+  total: z.number().int().nonnegative(),
+  ready: z.number().int().nonnegative(),
+  processing: z.number().int().nonnegative(),
+  failed: z.number().int().nonnegative(),
+  no_text: z.number().int().nonnegative(),
+});
+export type DocumentStats = z.infer<typeof DocumentStatsSchema>;
+
 // ---------- 鉴权 ----------
 export const UserSchema = z.object({
   id: z.string().uuid(),
@@ -79,15 +112,104 @@ export const DocumentSchema = z.object({
   content_hash: z.string().nullable(),
   folder: z.string().default(""),
   tags: z.array(z.string()).default([]),
+  // 团队空间：private | team；owner_name 仅团队空间列表返回
+  visibility: z.enum(["private", "team"]).default("private"),
+  owner_name: z.string().nullable().default(null),
   status: z.enum(["uploaded", "processing", "ready", "failed", "no_text"]),
   chunk_size: z.number(),
   chunk_overlap: z.number(),
   chunk_count: z.number(),
   error: z.string().nullable(),
+  version: z.number().default(1),
+  ingested_at: z.string().nullable().default(null),
+  stale: z.boolean().default(false),
+  stale_reasons: z.array(z.string()).default([]),
   created_at: z.string(),
   updated_at: z.string(),
 });
 export type KnowledgeDocument = z.infer<typeof DocumentSchema>;
+
+/** 就地更新响应：updated=false 表示内容未变化（幂等 no-op） */
+export const ContentUpdateResultSchema = z.object({
+  updated: z.boolean(),
+  document: DocumentSchema,
+});
+export type ContentUpdateResult = z.infer<typeof ContentUpdateResultSchema>;
+
+// ---------- 版本与更新日志 ----------
+export const VersionInfoSchema = z.object({
+  version: z.string(),
+});
+export type VersionInfo = z.infer<typeof VersionInfoSchema>;
+
+export const ChangelogGroupSchema = z.object({
+  title: z.string(),
+  items: z.array(z.string()),
+});
+export const ChangelogEntrySchema = z.object({
+  version: z.string(),
+  date: z.string(),
+  groups: z.array(ChangelogGroupSchema),
+});
+export type ChangelogEntry = z.infer<typeof ChangelogEntrySchema>;
+
+// ---------- 评测中心 ----------
+export const EvalDatasetSchema = z.object({
+  id: z.string().uuid(),
+  name: z.string(),
+  source: z.string(),
+  item_count: z.number(),
+  created_at: z.string(),
+});
+export type EvalDataset = z.infer<typeof EvalDatasetSchema>;
+
+export const EvalRunSchema = z.object({
+  id: z.string().uuid(),
+  dataset_id: z.string().uuid().nullable(),
+  name: z.string(),
+  config: z.record(z.unknown()),
+  status: z.string(),
+  summary: z.record(z.unknown()),
+  error: z.string().nullable(),
+  duration_ms: z.number().nullable(),
+  created_at: z.string(),
+  finished_at: z.string().nullable(),
+});
+export type EvalRun = z.infer<typeof EvalRunSchema>;
+
+export const EvalRunItemSchema = z.object({
+  id: z.string().uuid(),
+  idx: z.number(),
+  question: z.string(),
+  gold_doc: z.string(),
+  ranks: z.record(z.unknown()),
+});
+export type EvalRunItem = z.infer<typeof EvalRunItemSchema>;
+
+export const EvalRunDetailSchema = z.object({
+  run: EvalRunSchema,
+  items: z.array(EvalRunItemSchema),
+});
+export type EvalRunDetail = z.infer<typeof EvalRunDetailSchema>;
+
+export const OnlineStatsSchema = z.object({
+  days: z.number(),
+  points: z.array(
+    z.object({
+      date: z.string(),
+      calls: z.number(),
+      p50_total_ms: z.number().nullable(),
+      p95_total_ms: z.number().nullable(),
+      p50_ttft_ms: z.number().nullable(),
+      avg_recall_ms: z.number().nullable(),
+      avg_rerank_ms: z.number().nullable(),
+    }),
+  ),
+  feedback_up: z.number(),
+  feedback_down: z.number(),
+  down_rate: z.number().nullable(),
+});
+export type OnlineStats = z.infer<typeof OnlineStatsSchema>;
 
 export const FeedbackStatsSchema = z.object({
   total_answered: z.number(),

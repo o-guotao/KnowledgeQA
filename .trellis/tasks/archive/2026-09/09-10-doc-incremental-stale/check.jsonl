@@ -1,0 +1,2 @@
+{"file": ".trellis/spec/backend/documents-api.md", "reason": "Verify new endpoints keep validation order and error-code consistency"}
+{"file": ".trellis/spec/backend/quality-guidelines.md", "reason": "Code standards for review"}

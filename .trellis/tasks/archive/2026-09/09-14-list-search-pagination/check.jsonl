@@ -1,0 +1,7 @@
+{"file": ".trellis/spec/backend/quality-guidelines.md", "reason": "后端代码规范与禁止模式，检查分页/搜索实现是否符合项目约定"}
+{"file": ".trellis/spec/backend/documents-api.md", "reason": "核对文档列表与 stats 接口改动后是否仍满足既有授权与状态语义"}
+{"file": ".trellis/spec/backend/eval-center.md", "reason": "核对 runs 列表去掉 100 条上限后，评测中心前端派生逻辑（最新 done run、并发闸）是否仍成立"}
+{"file": ".trellis/spec/frontend/quality-guidelines.md", "reason": "前端代码规范检查"}
+{"file": ".trellis/spec/frontend/state-management.md", "reason": "重点检查历史消息分页是否破坏流式竞态守卫"}
+{"file": ".trellis/spec/guides/cross-layer-thinking-guide.md", "reason": "跨层一致性核对：后端信封字段与前端 zod/调用点是否全部对齐，是否有遗漏的列表调用点仍按裸数组解析"}
+{"file": ".trellis/spec/guides/code-reuse-thinking-guide.md", "reason": "检查是否存在重复的搜索/分页实现，以及是否漏改某个列表页"}

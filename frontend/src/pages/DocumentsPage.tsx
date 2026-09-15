@@ -1,15 +1,27 @@
-import { ArrowLeft, Eye, FileUp, Layers, Loader2, Quote, RefreshCw, Trash2, X } from "lucide-react";
+import { ArrowLeft, Eye, FileUp, Layers, Loader2, Quote, RefreshCw, Share2, Trash2, Users, X } from "lucide-react";
 import { useCallback, useEffect, useRef, useState } from "react";
 import { useNavigate } from "react-router-dom";
 import { z } from "zod";
 
-import { del, get, postForm } from "../api/client";
-import { DocumentSchema, type KnowledgeDocument } from "../api/schemas";
+import { del, get, patch, post, postForm, withQuery } from "../api/client";
+import {
+  ContentUpdateResultSchema,
+  DocumentSchema,
+  DocumentStatsSchema,
+  pageSchema,
+  type DocumentStats,
+  type KnowledgeDocument,
+} from "../api/schemas";
+import { useAuth } from "../auth/AuthContext";
 import { ConfirmDialog } from "../components/ConfirmDialog";
 import { DocumentPreviewModal } from "../components/DocumentPreviewModal";
+import { ThemeToggle } from "../components/ThemeToggle";
 import { Badge } from "../components/ui/badge";
 import { Button } from "../components/ui/button";
 import { Card, CardContent } from "../components/ui/card";
+import { Pagination } from "../components/ui/pagination";
+import { SearchInput } from "../components/ui/search-input";
+import { usePaginatedQuery } from "../hooks/usePaginatedQuery";
 
 const STATUS_META: Record<KnowledgeDocument["status"], { label: string; variant: "muted" | "warning" | "success" | "destructive" }> = {
   uploaded: { label: "排队中", variant: "muted" },
@@ -51,7 +63,11 @@ function filenameError(name: string): string | null {
   return null;
 }
 
-async function sha256Hex(buf: ArrayBuffer): Promise<string> {
+/** 计算文件 SHA-256 用于前端预检判重。
+ * crypto.subtle 仅在安全上下文（HTTPS / localhost）可用；纯 IP HTTP 访问时为 undefined，
+ * 此时返回 null 跳过前端判重，由后端权威 content_hash 判重兜底（重复时后端返回 409）。 */
+async function sha256Hex(buf: ArrayBuffer): Promise<string | null> {
+  if (typeof crypto === "undefined" || !crypto.subtle) return null;
   const digest = await crypto.subtle.digest("SHA-256", buf);
   return Array.from(new Uint8Array(digest))
     .map((b) => b.toString(16).padStart(2, "0"))
@@ -69,7 +85,10 @@ function fmtTime(iso: string): string {
 /** 上传文档 + 切分状态管理（独立菜单页）。仅当存在排队/切分中的文档时才轮询。 */
 export function DocumentsPage() {
   const navigate = useNavigate();
-  const [docs, setDocs] = useState<KnowledgeDocument[]>([]);
+  const { user } = useAuth();
+  const [tab, setTab] = useState<"mine" | "team">("mine");
+  const [shareTogglingId, setShareTogglingId] = useState<string | null>(null);
+  const [shareTeam, setShareTeam] = useState(false);
   const [queue, setQueue] = useState<PendingFile[]>([]);
   const [uploading, setUploading] = useState(false);
   const [preview, setPreview] = useState<KnowledgeDocument | null>(null);
@@ -78,18 +97,68 @@ export function DocumentsPage() {
   const [uploadFolder, setUploadFolder] = useState("");
   const [uploadTags, setUploadTags] = useState("");
   const [filterFolder, setFilterFolder] = useState<string | null>(null);
+  const [folders, setFolders] = useState<string[]>([]);
+  const [stats, setStats] = useState<DocumentStats | null>(null);
 
-  const refresh = useCallback(() => {
-    get<KnowledgeDocument[]>("/documents", z.array(DocumentSchema))
-      .then(setDocs)
-      .catch((err) => console.error("documents fetch failed", err));
+  // 我的文档：服务端分页 + 关键词（文件名/标签）；folder 过滤走 extraParams（变化时回第 1 页）
+  const docsQuery = usePaginatedQuery<KnowledgeDocument>(
+    useCallback(
+      (params) =>
+        get(withQuery("/documents", { ...params, folder: filterFolder ?? "" }), pageSchema(DocumentSchema)),
+      [filterFolder],
+    ),
+    { pageSize: 10, extraParams: { folder: filterFolder ?? "" } },
+  );
+  // 团队空间：切到该 Tab 才请求（enabled），独立分页/搜索状态
+  const teamQuery = usePaginatedQuery<KnowledgeDocument>(
+    useCallback((params) => get(withQuery("/documents/team", params), pageSchema(DocumentSchema)), []),
+    { pageSize: 10, enabled: tab === "team" },
+  );
+
+  const docs = docsQuery.items;
+  const teamDocs = teamQuery.items;
+  const setDocs = docsQuery.setItems;
+  const setTeamDocs = teamQuery.setItems;
+  const refreshTeam = teamQuery.refresh;
+
+  const refreshStats = useCallback(() => {
+    get("/documents/stats", DocumentStatsSchema).then(setStats).catch(() => {});
   }, []);
 
-  useEffect(() => {
-    refresh();
-  }, [refresh]);
+  const refreshFolders = useCallback(() => {
+    get("/documents/folders", z.array(z.string())).then(setFolders).catch(() => {});
+  }, []);
 
-  const pendingCount = docs.filter((d) => PENDING_STATUSES.includes(d.status)).length;
+  // 顶部 chips 计数来自 /documents/stats（全局口径，不随分页/搜索变化）
+  const refresh = useCallback(() => {
+    docsQuery.refresh();
+    refreshStats();
+    refreshFolders();
+  }, [docsQuery.refresh, refreshStats, refreshFolders]); // eslint-disable-line react-hooks/exhaustive-deps
+
+  // 首次挂载拉取顶部计数与文件夹 chips（文档列表由 usePaginatedQuery 自行加载；
+  // stats/folders 不挂载拉取会一直停留在 null/[]，表现为「全部 0」且无文件夹按钮）
+  useEffect(() => {
+    refreshStats();
+    refreshFolders();
+  }, [refreshStats, refreshFolders]);
+
+  /** 共享/取消共享到团队空间（owner 或 admin） */
+  const toggleShare = async (doc: KnowledgeDocument) => {
+    setShareTogglingId(doc.id);
+    try {
+      const next = doc.visibility === "team" ? "private" : "team";
+      await patch(`/documents/${doc.id}`, { visibility: next }, DocumentSchema);
+      refresh();
+      if (tab === "team") refreshTeam();
+    } catch (err) {
+      alert(err instanceof Error ? err.message : "操作失败");
+    } finally {
+      setShareTogglingId(null);
+    }
+  };
+
+  const pendingCount = stats?.processing ?? 0;
 
   // 有待处理文档才轮询，全部终态后停止，避免无谓请求
   useEffect(() => {
@@ -121,9 +190,11 @@ export function DocumentsPage() {
       let hash: string | null = null;
       if (problems.length === 0) {
         hash = await sha256Hex(await file.arrayBuffer());
-        const dupName = existingByHash.get(hash) ?? selectionHashes.get(hash);
-        if (dupName) problems.push(`内容已存在：${dupName}`);
-        else selectionHashes.set(hash, file.name);
+        if (hash) {
+          const dupName = existingByHash.get(hash) ?? selectionHashes.get(hash);
+          if (dupName) problems.push(`内容已存在：${dupName}`);
+          else selectionHashes.set(hash, file.name);
+        }
       }
 
       items.push(
@@ -151,6 +222,7 @@ export function DocumentsPage() {
         form.append("file", item.file);
         if (uploadFolder.trim()) form.append("folder", uploadFolder.trim());
         if (uploadTags.trim()) form.append("tags", uploadTags.trim());
+        if (shareTeam) form.append("visibility", "team");
         const created = await postForm<KnowledgeDocument>("/documents", form, DocumentSchema);
         setDocs((prev) => [created, ...prev]);
         setQueue((prev) => prev.filter((x) => x.id !== item.id));
@@ -161,6 +233,7 @@ export function DocumentsPage() {
     }
     setUploading(false);
     if (fileRef.current) fileRef.current.value = "";
+    refresh();
   };
 
   const clearQueue = () => setQueue([]);
@@ -172,6 +245,48 @@ export function DocumentsPage() {
   const [singleConfirm, setSingleConfirm] = useState<KnowledgeDocument | null>(null);
   const [bulkConfirm, setBulkConfirm] = useState(false);
   const [bulkDeleting, setBulkDeleting] = useState(false);
+  // 增量更新与失效检测：一键重切 + 就地更新内容
+  const [reingestingId, setReingestingId] = useState<string | null>(null);
+  const [updateTarget, setUpdateTarget] = useState<KnowledgeDocument | null>(null);
+  const [updatingContent, setUpdatingContent] = useState(false);
+  const updateFileRef = useRef<HTMLInputElement>(null);
+
+  /** 一键刷新：按当前配置对已存储内容重新切分（stale / failed 文档）。 */
+  const reingest = async (doc: KnowledgeDocument) => {
+    setReingestingId(doc.id);
+    try {
+      await post(`/documents/${doc.id}/reingest`, {}, DocumentSchema);
+      refresh();
+    } catch (err) {
+      alert(err instanceof Error ? err.message : "重新切分失败");
+    } finally {
+      setReingestingId(null);
+    }
+  };
+
+  /** 就地更新：选择新文件 → hash 比对 → 替换内容并重切（version+1）。 */
+  const onSelectUpdateFile = async (list: FileList | null) => {
+    const file = list?.[0];
+    const target = updateTarget;
+    if (!file || !target) return;
+    setUpdatingContent(true);
+    try {
+      const form = new FormData();
+      form.append("file", file);
+      const result = await postForm(
+        `/documents/${target.id}/content`,
+        form,
+        ContentUpdateResultSchema,
+      );
+      if (!result.updated) alert("内容与当前版本相同，无需更新");
+      refresh();
+    } catch (err) {
+      alert(err instanceof Error ? err.message : "更新内容失败");
+    } finally {
+      setUpdatingContent(false);
+      setUpdateTarget(null);
+    }
+  };
 
   const toggleSelect = (id: string) =>
     setSelected((prev) => {
@@ -186,11 +301,13 @@ export function DocumentsPage() {
     try {
       await del(`/documents/${doc.id}`);
       setDocs((prev) => prev.filter((d) => d.id !== doc.id));
+      setTeamDocs((prev) => prev.filter((d) => d.id !== doc.id));
       setSelected((prev) => {
         const next = new Set(prev);
         next.delete(doc.id);
         return next;
       });
+      refresh();
     } catch (err) {
       alert(err instanceof Error ? err.message : "删除失败");
     } finally {
@@ -212,19 +329,21 @@ export function DocumentsPage() {
     setSelected(new Set());
     setBulkDeleting(false);
     setBulkConfirm(false);
+    refresh();
   };
 
-  const readyCount = docs.filter((d) => d.status === "ready").length;
-  const failedCount = docs.filter((d) => d.status === "failed").length;
-  const noTextCount = docs.filter((d) => d.status === "no_text").length;
+  const readyCount = stats?.ready ?? 0;
+  const failedCount = stats?.failed ?? 0;
+  const noTextCount = stats?.no_text ?? 0;
+  const totalCount = stats?.total ?? 0;
   const busy = uploading;
+  // 是否有生效的过滤（用于区分「没有匹配」与「还没有文档」两种空态）
+  const isFiltering = docsQuery.query !== "" || filterFolder !== null;
 
-  // 文件夹过滤：全部非空 folder 去重排序；filterFolder 为 null 表示不过滤
-  const folders = Array.from(new Set(docs.map((d) => d.folder).filter((f) => f))).sort();
-  const filteredDocs = filterFolder === null ? docs : docs.filter((d) => d.folder === filterFolder);
-  const allSelected = filteredDocs.length > 0 && filteredDocs.every((d) => selected.has(d.id));
+  // 「全选」只作用于当前页；跨页已选项保留在 selected 中（批量删除用）
+  const allSelected = docs.length > 0 && docs.every((d) => selected.has(d.id));
   const toggleSelectAll = () =>
-    setSelected(allSelected ? new Set() : new Set(filteredDocs.map((d) => d.id)));
+    setSelected(allSelected ? new Set() : new Set(docs.map((d) => d.id)));
 
   return (
     <main className="min-h-screen bg-gradient-to-b from-theme-bg via-theme-bg to-theme-deep px-4 py-8 sm:px-8">
@@ -240,6 +359,7 @@ export function DocumentsPage() {
             </div>
           </div>
           <div className="flex items-center gap-2">
+            <ThemeToggle />
             <Button
               variant="outline"
               size="sm"
@@ -269,16 +389,54 @@ export function DocumentsPage() {
                 e.target.value = "";
               }}
             />
+            {/* 就地更新内容用：单选文件，目标文档由 updateTarget 暂存 */}
+            <input
+              ref={updateFileRef}
+              type="file"
+              accept=".txt,.md,.markdown,.pdf"
+              className="hidden"
+              onChange={(e) => {
+                void onSelectUpdateFile(e.target.files);
+                e.target.value = "";
+              }}
+            />
           </div>
         </header>
 
+        {/* 空间切换：我的文档 | 团队空间 */}
+        <div className="flex gap-1 border-b border-theme-line">
+          {([["mine", "我的文档"], ["team", "团队空间"]] as const).map(([key, label]) => (
+            <button
+              key={key}
+              type="button"
+              onClick={() => setTab(key)}
+              className={`-mb-px cursor-pointer border-b-2 px-4 py-2 text-sm transition-colors ${
+                tab === key
+                  ? "border-brand font-medium text-brand"
+                  : "border-transparent text-theme-sub hover:text-theme-text"
+              }`}
+            >
+              {label}
+            </button>
+          ))}
+        </div>
+
+        {tab === "mine" && (
         <p className="max-w-3xl text-sm leading-6 text-theme-sub">
           上传制度、手册或 FAQ（.txt/.md/.pdf，单个 ≤ 20MB，可一次多选）。系统对重复内容/纯图片 PDF 做校验并明确提示；
           合规文档自动切分入库，之后即可在问答中检索并带引用回答。
           {pendingCount > 0 && " 有文档正在处理，将自动刷新直到完成。"}
         </p>
+        )}
+
+        {tab === "team" && (
+        <p className="max-w-3xl text-sm leading-6 text-theme-sub">
+          团队成员共享的文档，全员可检索与预览；管理（取消共享/删除）由文档所有者或管理员操作。
+        </p>
+        )}
 
         {/* 本批上传归属：文件夹与标签（可选） */}
+        {tab === "mine" && (
         <div className="flex flex-wrap items-center gap-3 rounded-lg border border-theme-line bg-theme-card px-4 py-3 text-sm">
           <label className="flex items-center gap-2 text-theme-sub">
             文件夹
@@ -298,11 +456,22 @@ export function DocumentsPage() {
               className="w-56 rounded-md border border-theme-line bg-theme-input px-2 py-1 text-sm text-theme-text placeholder:text-theme-sub focus:border-brand focus:outline-none"
             />
           </label>
+          <label className="flex cursor-pointer items-center gap-2 text-theme-sub">
+            <input
+              type="checkbox"
+              checked={shareTeam}
+              onChange={(e) => setShareTeam(e.target.checked)}
+              className="accent-brand"
+            />
+            <Users size={14} />
+            上传到团队空间（全员可检索）
+          </label>
           <span className="text-xs text-theme-sub">应用于本批上传，便于分类与检索</span>
         </div>
+        )}
 
         {/* 待上传/上传结果面板 */}
-        {queue.length > 0 && (
+        {tab === "mine" && queue.length > 0 && (
           <Card>
             <CardContent className="space-y-2 py-4">
               <div className="flex items-center justify-between gap-2">
@@ -368,13 +537,23 @@ export function DocumentsPage() {
           </Card>
         )}
 
+        {tab === "mine" && (
+        <>
+        <SearchInput
+          value={docsQuery.query}
+          onChange={docsQuery.setQuery}
+          placeholder="搜索文件名或标签"
+          ariaLabel="搜索我的文档"
+          className="w-full sm:max-w-sm"
+        />
+        {docsQuery.error && <p className="text-sm text-red-400">文档加载失败：{docsQuery.error}</p>}
         <div className="flex flex-wrap items-center gap-2 text-sm">
           <button
             type="button"
             onClick={() => setFilterFolder(null)}
             className={`rounded-full px-3 py-1 cursor-pointer transition-colors ${filterFolder === null ? "bg-brand text-white" : "bg-white/10 text-theme-sub hover:bg-slate-200"}`}
           >
-            全部 {docs.length}
+            全部 {totalCount}
           </button>
           {folders.map((f) => (
             <button
@@ -415,15 +594,112 @@ export function DocumentsPage() {
             )}
           </div>
         )}
+        </>
+        )}
 
+        {tab === "team" && (
+        <section className="space-y-3">
+          <SearchInput
+            value={teamQuery.query}
+            onChange={teamQuery.setQuery}
+            placeholder="搜索文件名 / 标签 / 共享人"
+            ariaLabel="搜索团队空间文档"
+            className="w-full sm:max-w-sm"
+          />
+          {teamQuery.error && <p className="text-sm text-red-400">团队空间加载失败：{teamQuery.error}</p>}
+          {teamDocs.length === 0 ? (
+            <div className="flex flex-col items-center rounded-2xl border border-dashed border-theme-line bg-theme-card/60 px-6 py-16 text-center">
+              <div className="flex h-12 w-12 items-center justify-center rounded-xl bg-brand/15 text-brand-light">
+                <Users size={22} />
+              </div>
+              <p className="mt-5 font-medium text-theme-text">{teamQuery.query !== "" ? "没有匹配的共享文档" : "团队空间还没有共享文档"}</p>
+              <p className="mt-1 text-sm text-theme-sub">{teamQuery.query !== "" ? "换个关键词试试" : "在「我的文档」中点击共享按钮，即可把文档共享给全员检索"}</p>
+            </div>
+          ) : (
+            teamDocs.map((d) => {
+              const meta = STATUS_META[d.status];
+              return (
+                <Card key={d.id} className="transition-shadow hover:shadow-card">
+                  <CardContent className="flex flex-col gap-2 py-4 sm:flex-row sm:items-center sm:justify-between">
+                    <div className="min-w-0">
+                      <div className="flex flex-wrap items-center gap-2">
+                        <p className="truncate font-medium text-theme-text">{d.filename}</p>
+                        <Badge variant={meta.variant}>{meta.label}</Badge>
+                        {d.stale && (
+                          <Badge variant="warning" title={d.stale_reasons.join("\n")}>
+                            需刷新
+                          </Badge>
+                        )}
+                        {d.owner_name && (
+                          <span className="rounded bg-brand/15 px-1.5 py-0.5 text-xs text-brand-light">
+                            {d.owner_name}
+                          </span>
+                        )}
+                      </div>
+                      <p className="mt-1 text-xs text-theme-sub">
+                        {fmtTime(d.created_at)}
+                        {d.status === "ready" && ` · ${d.chunk_count} 个切块`}
+                      </p>
+                    </div>
+                    <div className="flex shrink-0 items-center gap-3">
+                      <Button
+                        variant="ghost"
+                        size="icon"
+                        aria-label={`预览 ${d.filename}`}
+                        onClick={() => setPreview(d)}
+                        className="shrink-0 cursor-pointer text-theme-sub hover:bg-white/10 hover:text-theme-sub"
+                      >
+                        <Eye size={15} />
+                      </Button>
+                      {user?.role === "admin" && (
+                        <>
+                          <Button
+                            variant="ghost"
+                            size="icon"
+                            aria-label={`取消共享 ${d.filename}`}
+                            title="取消共享（移出团队空间）"
+                            disabled={shareTogglingId === d.id}
+                            onClick={() => void toggleShare(d)}
+                            className="shrink-0 cursor-pointer text-theme-sub hover:bg-white/10 hover:text-theme-sub"
+                          >
+                            {shareTogglingId === d.id ? (
+                              <Loader2 size={15} className="animate-spin" />
+                            ) : (
+                              <Share2 size={15} />
+                            )}
+                          </Button>
+                          <Button
+                            variant="ghost"
+                            size="icon"
+                            aria-label={`删除 ${d.filename}`}
+                            disabled={deletingId === d.id}
+                            onClick={() => setSingleConfirm(d)}
+                            className="shrink-0 cursor-pointer text-theme-sub hover:bg-red-500/15 hover:text-red-400"
+                          >
+                            {deletingId === d.id ? <Loader2 size={15} className="animate-spin" /> : <Trash2 size={15} />}
+                          </Button>
+                        </>
+                      )}
+                    </div>
+                  </CardContent>
+                </Card>
+              );
+            })
+          )}
+          <Pagination page={teamQuery.page} pages={teamQuery.pages} total={teamQuery.total} onPageChange={teamQuery.setPage} disabled={teamQuery.loading} />
+        </section>
+        )}
+
+        {tab === "mine" && (
         <section className="space-y-3">
           {docs.length === 0 ? (
             <div className="flex flex-col items-center rounded-2xl border border-dashed border-theme-line bg-theme-card/60 px-6 py-16 text-center">
               <div className="flex h-12 w-12 items-center justify-center rounded-xl bg-gradient-to-br from-brand to-brand-dark text-white shadow-pop">
                 <FileUp size={22} />
               </div>
-              <p className="mt-5 font-medium text-theme-text">还没有上传过文档</p>
-              <p className="mt-1 text-sm text-theme-sub">上传制度、手册或 FAQ，即可在问答中检索并带引用回答</p>
+              <p className="mt-5 font-medium text-theme-text">{isFiltering ? "没有匹配的文档" : "还没有上传过文档"}</p>
+              <p className="mt-1 text-sm text-theme-sub">{isFiltering ? "换个关键词，或清空文件夹筛选试试" : "上传制度、手册或 FAQ，即可在问答中检索并带引用回答"}</p>
+              {!isFiltering && (<>
               <div className="mt-8 grid w-full max-w-xl gap-3 sm:grid-cols-3">
                 {[
                   { icon: FileUp, title: "上传文档", desc: ".txt/.md/.pdf，单个 ≤20MB" },
@@ -443,9 +719,10 @@ export function DocumentsPage() {
                 <FileUp size={14} />
                 上传第一份文档
               </Button>
+              </>)}
             </div>
           ) : (
-            filteredDocs.map((d) => {
+            docs.map((d) => {
               const meta = STATUS_META[d.status];
               const sideText =
                 d.status === "ready"
@@ -467,6 +744,19 @@ export function DocumentsPage() {
                       <div className="flex flex-wrap items-center gap-2">
                         <p className="truncate font-medium text-theme-text">{d.filename}</p>
                         <Badge variant={meta.variant}>{meta.label}</Badge>
+                        <span className="text-xs text-theme-sub" title={`内容版本 v${d.version}`}>
+                          v{d.version}
+                        </span>
+                        {d.stale && (
+                          <Badge variant="warning" title={d.stale_reasons.join("\n")}>
+                            需刷新
+                          </Badge>
+                        )}
+                        {d.visibility === "team" && (
+                          <span className="rounded bg-emerald-500/15 px-1.5 py-0.5 text-xs text-emerald-400" title="已共享到团队空间，全员可检索">
+                            团队
+                          </span>
+                        )}
                         {d.folder && (
                           <span className="rounded bg-brand/15 px-1.5 py-0.5 text-xs text-brand-light">{d.folder}</span>
                         )}
@@ -489,6 +779,54 @@ export function DocumentsPage() {
                           <p className="text-theme-sub">{sideText}</p>
                         )}
                       </div>
+                      {(d.stale || d.status === "failed") && (
+                        <Button
+                          variant="ghost"
+                          size="icon"
+                          aria-label={`重新切分 ${d.filename}`}
+                          title="按当前配置重新切分"
+                          disabled={reingestingId === d.id}
+                          onClick={() => void reingest(d)}
+                          className="shrink-0 cursor-pointer text-amber-500 hover:bg-amber-500/15 hover:text-amber-400"
+                        >
+                          {reingestingId === d.id ? (
+                            <Loader2 size={15} className="animate-spin" />
+                          ) : (
+                            <RefreshCw size={15} />
+                          )}
+                        </Button>
+                      )}
+                      <Button
+                        variant="ghost"
+                        size="icon"
+                        aria-label={`更新 ${d.filename} 内容`}
+                        title="上传新内容（版本 +1）"
+                        disabled={updatingContent || PENDING_STATUSES.includes(d.status)}
+                        onClick={() => {
+                          setUpdateTarget(d);
+                          updateFileRef.current?.click();
+                        }}
+                        className="shrink-0 cursor-pointer text-theme-sub hover:bg-white/10 hover:text-theme-sub"
+                      >
+                        <FileUp size={15} />
+                      </Button>
+                      <Button
+                        variant="ghost"
+                        size="icon"
+                        aria-label={d.visibility === "team" ? `取消共享 ${d.filename}` : `共享 ${d.filename} 到团队空间`}
+                        title={d.visibility === "team" ? "取消共享（移出团队空间）" : "共享到团队空间（全员可检索）"}
+                        disabled={shareTogglingId === d.id}
+                        onClick={() => void toggleShare(d)}
+                        className={`shrink-0 cursor-pointer hover:bg-emerald-500/15 hover:text-emerald-400 ${
+                          d.visibility === "team" ? "text-emerald-400" : "text-theme-sub"
+                        }`}
+                      >
+                        {shareTogglingId === d.id ? (
+                          <Loader2 size={15} className="animate-spin" />
+                        ) : (
+                          <Share2 size={15} />
+                        )}
+                      </Button>
                       <Button
                         variant="ghost"
                         size="icon"
@@ -515,7 +853,9 @@ export function DocumentsPage() {
               );
             })
           )}
+          <Pagination page={docsQuery.page} pages={docsQuery.pages} total={docsQuery.total} onPageChange={docsQuery.setPage} disabled={docsQuery.loading} />
         </section>
+        )}
 
         {preview && (
           <DocumentPreviewModal

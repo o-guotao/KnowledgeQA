@@ -1,0 +1,2 @@
+{"file": ".trellis/spec/backend/documents-api.md", "reason": "Task/status machine and error-code conventions the eval runner and admin endpoints must stay consistent with"}
+{"file": ".trellis/tasks/09-14-rag-eval-center/design.md", "reason": "Reviewed technical design: data model, async runner isolation, config matrix, API surface"}

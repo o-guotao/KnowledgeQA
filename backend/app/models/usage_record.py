@@ -29,5 +29,10 @@ class UsageRecord(Base):
     prompt_tokens: Mapped[int] = mapped_column(Integer, default=0)
     completion_tokens: Mapped[int] = mapped_column(Integer, default=0)
     cost_cny: Mapped[float] = mapped_column(Float, default=0.0)
+    # 分阶段耗时（毫秒，chat 链路打点；老数据/未开启环节为 NULL）
+    ttft_ms: Mapped[float | None] = mapped_column(Float, nullable=True)
+    total_ms: Mapped[float | None] = mapped_column(Float, nullable=True)
+    recall_ms: Mapped[float | None] = mapped_column(Float, nullable=True)
+    rerank_ms: Mapped[float | None] = mapped_column(Float, nullable=True)
     trace_id: Mapped[str] = mapped_column(String(32), default="")
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now())

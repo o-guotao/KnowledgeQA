@@ -75,8 +75,11 @@ class Settings(BaseSettings):
     chunk_size: int = 512
     chunk_overlap: int = 64
     rag_top_k: int = 5
-    # 混合检索：向量 + 关键词（Postgres tsvector / SQLite LIKE）RRF 融合
+    # 混合检索：向量 + 关键词 RRF 融合
     hybrid_search_enabled: bool = True
+    # 关键词召回引擎：true=BM25（jieba+rank_bm25 内存索引，推荐）；
+    # false=数据库回退（Postgres tsvector / SQLite LIKE）
+    bm25_enabled: bool = True
     # 切分策略：window 滑动窗口 / semantic 语义分块（按 Markdown 标题层级，父子块）
     chunk_strategy: str = "window"  # window | semantic
 
@@ -87,6 +90,8 @@ class Settings(BaseSettings):
 
     # 任务与配额
     task_timeout_seconds: float = 300.0
+    # 评测任务（run_eval）独立超时：4 组配置矩阵 + 可选 LLM 生成，远超普通任务
+    eval_task_timeout_seconds: float = 1800.0
     task_max_retries: int = 3
     task_retry_base_seconds: float = 5.0
     quota_monthly_tokens: int = 1_000_000

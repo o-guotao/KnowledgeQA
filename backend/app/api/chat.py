@@ -8,6 +8,7 @@ DB 策略：流开始前建立 assistant 记录拿到 id；流期间只读；
 避免 ORM 对象跨会话共享的生命周期问题。
 """
 import logging
+import time
 import uuid
 from collections.abc import AsyncGenerator
 
@@ -85,6 +86,11 @@ async def _event_stream(
     assistant_id: uuid.UUID | None = None
     content_parts: list[str] = []
     citations: list[dict] = []
+    # 分阶段耗时打点（毫秒）：recall=embed+召回(不含重排)、rerank、ttft=首 token、total=到 usage 事件
+    t_start = time.perf_counter()
+    recall_ms: float | None = None
+    rerank_ms: float | None = None
+    ttft_ms: float | None = None
 
     async def fail(code: str, message: str, event_message: str) -> AsyncGenerator[dict, None]:
         if assistant_id is not None:
@@ -126,9 +132,16 @@ async def _event_stream(
         # ---- RAG 召回（按用户隔离），失败降级为空召回 ----
         with langfuse_tracing.trace_span(trace_id, "retrieve", {"query": body.content[:200]}):
             try:
+                t0 = time.perf_counter()
+                timing: dict = {}
                 query_vec = await embed_query(body.content)
                 async with SessionLocal() as db:
-                    chunks = await retrieve(db, user.id, query_vec, top_k=body.top_k, query_text=body.content)
+                    chunks = await retrieve(
+                        db, user.id, query_vec, top_k=body.top_k, query_text=body.content, timing=timing
+                    )
+                # recall_ms = embed + 向量/关键词/RRF（不含重排）
+                recall_ms = round((time.perf_counter() - t0) * 1000 - timing.get("rerank_ms", 0.0), 1)
+                rerank_ms = timing.get("rerank_ms")
             except Exception as exc:
                 logger.warning("retrieve degraded: %s", exc, extra={"event": "rag_degraded"})
                 chunks = []
@@ -165,6 +178,8 @@ async def _event_stream(
                 if await request.is_disconnected():
                     raise _ClientGone()
                 if kind == "delta":
+                    if ttft_ms is None:
+                        ttft_ms = round((time.perf_counter() - t_start) * 1000, 1)
                     content_parts.append(payload or "")
                     yield _sse(DeltaEvent(trace_id=trace_id, content=payload or ""))
                 elif kind == "usage":
@@ -178,11 +193,16 @@ async def _event_stream(
                     )
                     async with SessionLocal() as db:
                         await cost.accumulate_usage(db, user.id, p, c)
-                        # 管理后台用量/成本明细：每次调用落一行（含 model 维度）
+                        # 管理后台用量/成本明细：每次调用落一行（含 model 维度）；
+                        # 分阶段耗时只记首轮（召回/重排/TTFT 仅发生一次），工具回路后续轮为 NULL
                         db.add(UsageRecord(
                             user_id=user.id, session_id=body.session_id,
                             model=provider.model_name, prompt_tokens=p,
                             completion_tokens=c, cost_cny=cost_cny_round, trace_id=trace_id,
+                            ttft_ms=ttft_ms if round_no == 0 else None,
+                            total_ms=round((time.perf_counter() - t_start) * 1000, 1) if round_no == 0 else None,
+                            recall_ms=recall_ms if round_no == 0 else None,
+                            rerank_ms=rerank_ms if round_no == 0 else None,
                         ))
                         await db.commit()
                     yield _sse(UsageEvent(

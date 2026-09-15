@@ -178,6 +178,13 @@ async def ingest_document(document_id: uuid.UUID) -> None:
         document.status = "ready"
         document.chunk_count = chunk_count
         document.error = None
+        # 记录本次入库的配置快照与时间，供 stale 失效检测比对
+        from app.services.doc_sync import current_ingest_signature
+
+        document.ingest_signature = current_ingest_signature(
+            settings, document.chunk_size, document.chunk_overlap
+        )
+        document.ingested_at = datetime.now(timezone.utc)
         await db.commit()
 
 
@@ -195,6 +202,10 @@ async def mark_document_failed(document_id: uuid.UUID, error: str) -> None:
 async def run_task(task: Task) -> None:
     if task.type == "ingest_document":
         await ingest_document(uuid.UUID(task.payload["document_id"]))
+    elif task.type == "run_eval":
+        from app.services.eval_runner import run_eval_run
+
+        await run_eval_run(uuid.UUID(task.payload["run_id"]))
     elif task.type == "demo_fail":
         # 演示用：恒超时，用于验证"超时 -> 重试 -> 死信"链路
         await asyncio.sleep(1e6)
@@ -244,10 +255,13 @@ async def loop() -> None:
         set_trace_id(task.trace_id or uuid.uuid4().hex[:16])
         started = time.monotonic()
         logger.info("task claimed", extra={"task_id": str(task.id), "extra": {"type": task.type}})
+        timeout_s = (
+            settings.eval_task_timeout_seconds if task.type == "run_eval" else settings.task_timeout_seconds
+        )
         try:
-            await asyncio.wait_for(run_task(task), timeout=settings.task_timeout_seconds)
+            await asyncio.wait_for(run_task(task), timeout=timeout_s)
         except asyncio.TimeoutError:
-            await handle_failure(task, f"任务超时（>{settings.task_timeout_seconds}s）")
+            await handle_failure(task, f"任务超时（>{timeout_s}s）")
             if task.type == "ingest_document":
                 await mark_document_failed(uuid.UUID(task.payload["document_id"]), "处理超时")
             continue

@@ -3,11 +3,19 @@ import uuid
 from datetime import datetime, timedelta, timezone
 
 from fastapi import APIRouter, Depends, Query
-from sqlalchemy import func, select
+from sqlalchemy import func, or_, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.config import get_settings
 from app.core.errors import AppError, not_found
+from app.core.pagination import (
+    LIKE_ESCAPE,
+    PageParams,
+    like_pattern,
+    make_page,
+    normalize_q,
+    paginate,
+)
 from app.core.security import get_current_user, hash_password, require_admin
 from app.db import get_db
 from app.models.quota import Quota
@@ -22,6 +30,7 @@ from app.schemas.admin import (
     ModelUsage,
     UserUsage,
 )
+from app.schemas.common import Page
 from app.services.cost import current_period
 
 router = APIRouter(dependencies=[Depends(require_admin)])
@@ -48,24 +57,57 @@ async def _admin_count(db: AsyncSession) -> int:
 # ---------- 用户 CRUD ----------
 
 
-@router.get("/admin/users", response_model=list[AdminUserOut])
-async def list_users(db: AsyncSession = Depends(get_db)) -> list[AdminUserOut]:
+@router.get("/admin/users", response_model=Page[AdminUserOut])
+async def list_users(
+    q: str | None = None,
+    role: str | None = None,
+    params: PageParams = Depends(),
+    db: AsyncSession = Depends(get_db),
+) -> Page[AdminUserOut]:
+    """用户列表：q 匹配用户名/显示名，role 精确过滤，服务端分页。
+
+    分页后 quotas 只查当页 user_id 集合（原先拉全量 quotas，分页后会白白多查）。
+    """
     default_limit = get_settings().quota_monthly_tokens
     period = current_period()
-    users = (await db.execute(select(User).order_by(User.created_at))).scalars().all()
-    quotas = (await db.execute(select(Quota).where(Quota.period == period))).scalars().all()
-    by_user = {q.user_id: q for q in quotas}
-    return [
-        AdminUserOut(
-            id=u.id,
-            username=u.username,
-            display_name=u.display_name,
-            role=u.role,
-            created_at=u.created_at,
-            month=_month_of(by_user.get(u.id), default_limit),
+    stmt = select(User)
+    term = normalize_q(q)
+    if term is not None:
+        pattern = like_pattern(term)
+        stmt = stmt.where(
+            or_(
+                User.username.ilike(pattern, escape=LIKE_ESCAPE),
+                User.display_name.ilike(pattern, escape=LIKE_ESCAPE),
+            )
         )
-        for u in users
-    ]
+    if role is not None:
+        stmt = stmt.where(User.role == role)
+    stmt = stmt.order_by(User.created_at.asc(), User.id.asc())
+    rows, total = await paginate(db, stmt, params)
+    page_users = [row[0] for row in rows]
+    quotas = (
+        await db.execute(
+            select(Quota).where(
+                Quota.period == period, Quota.user_id.in_([u.id for u in page_users])
+            )
+        )
+    ).scalars().all() if page_users else []
+    by_user = {quota.user_id: quota for quota in quotas}
+    return make_page(
+        [
+            AdminUserOut(
+                id=u.id,
+                username=u.username,
+                display_name=u.display_name,
+                role=u.role,
+                created_at=u.created_at,
+                month=_month_of(by_user.get(u.id), default_limit),
+            )
+            for u in page_users
+        ],
+        total,
+        params,
+    )
 
 
 @router.post("/admin/users", response_model=AdminUserOut, status_code=201)
@@ -187,45 +229,77 @@ async def usage_daily(days: int = Query(30, ge=1, le=365), db: AsyncSession = De
     ]
 
 
-@router.get("/admin/usage/by-user", response_model=list[UserUsage])
-async def usage_by_user(days: int = Query(30, ge=1, le=365), db: AsyncSession = Depends(get_db)) -> list[UserUsage]:
-    rows = (
-        await db.execute(
-            select(
-                UsageRecord.user_id.label("uid"),
-                User.username.label("username"),
-                func.count().label("calls"),
-                func.coalesce(func.sum(UsageRecord.prompt_tokens + UsageRecord.completion_tokens), 0).label("tokens"),
-                func.coalesce(func.sum(UsageRecord.cost_cny), 0.0).label("cost"),
-            )
-            .join(User, User.id == UsageRecord.user_id)
-            .where(UsageRecord.created_at >= _since(days))
-            .group_by(UsageRecord.user_id, User.username)
-            .order_by(func.coalesce(func.sum(UsageRecord.cost_cny), 0.0).desc())
+@router.get("/admin/usage/by-user", response_model=Page[UserUsage])
+async def usage_by_user(
+    q: str | None = None,
+    days: int = Query(30, ge=1, le=365),
+    params: PageParams = Depends(),
+    db: AsyncSession = Depends(get_db),
+) -> Page[UserUsage]:
+    """按用户用量：q 匹配用户名，cost 降序分页（days 时间窗与分页正交）。"""
+    stmt = (
+        select(
+            UsageRecord.user_id.label("uid"),
+            User.username.label("username"),
+            func.count().label("calls"),
+            func.coalesce(func.sum(UsageRecord.prompt_tokens + UsageRecord.completion_tokens), 0).label("tokens"),
+            func.coalesce(func.sum(UsageRecord.cost_cny), 0.0).label("cost"),
         )
-    ).all()
-    return [
-        UserUsage(user_id=r.uid, username=r.username, calls=r.calls, total_tokens=r.tokens, cost_cny=round(r.cost, 6))
-        for r in rows
-    ]
+        .join(User, User.id == UsageRecord.user_id)
+        .where(UsageRecord.created_at >= _since(days))
+        .group_by(UsageRecord.user_id, User.username)
+    )
+    term = normalize_q(q)
+    if term is not None:
+        # username 是分组列：分组前过滤（写 where 而非 having）
+        stmt = stmt.where(User.username.ilike(like_pattern(term), escape=LIKE_ESCAPE))
+    stmt = stmt.order_by(
+        func.coalesce(func.sum(UsageRecord.cost_cny), 0.0).desc(), UsageRecord.user_id.asc()
+    )
+    rows, total = await paginate(db, stmt, params)
+    return make_page(
+        [
+            UserUsage(
+                user_id=r.uid, username=r.username, calls=r.calls,
+                total_tokens=r.tokens, cost_cny=round(r.cost, 6),
+            )
+            for r in rows
+        ],
+        total,
+        params,
+    )
 
 
-@router.get("/admin/usage/by-model", response_model=list[ModelUsage])
-async def usage_by_model(days: int = Query(30, ge=1, le=365), db: AsyncSession = Depends(get_db)) -> list[ModelUsage]:
-    rows = (
-        await db.execute(
-            select(
-                UsageRecord.model.label("model"),
-                func.count().label("calls"),
-                func.coalesce(func.sum(UsageRecord.prompt_tokens + UsageRecord.completion_tokens), 0).label("tokens"),
-                func.coalesce(func.sum(UsageRecord.cost_cny), 0.0).label("cost"),
-            )
-            .where(UsageRecord.created_at >= _since(days))
-            .group_by(UsageRecord.model)
-            .order_by(func.coalesce(func.sum(UsageRecord.cost_cny), 0.0).desc())
+@router.get("/admin/usage/by-model", response_model=Page[ModelUsage])
+async def usage_by_model(
+    q: str | None = None,
+    days: int = Query(30, ge=1, le=365),
+    params: PageParams = Depends(),
+    db: AsyncSession = Depends(get_db),
+) -> Page[ModelUsage]:
+    """按模型用量：q 匹配模型名，cost 降序分页。"""
+    stmt = (
+        select(
+            UsageRecord.model.label("model"),
+            func.count().label("calls"),
+            func.coalesce(func.sum(UsageRecord.prompt_tokens + UsageRecord.completion_tokens), 0).label("tokens"),
+            func.coalesce(func.sum(UsageRecord.cost_cny), 0.0).label("cost"),
         )
-    ).all()
-    return [
-        ModelUsage(model=r.model, calls=r.calls, total_tokens=r.tokens, cost_cny=round(r.cost, 6))
-        for r in rows
-    ]
+        .where(UsageRecord.created_at >= _since(days))
+        .group_by(UsageRecord.model)
+    )
+    term = normalize_q(q)
+    if term is not None:
+        stmt = stmt.where(UsageRecord.model.ilike(like_pattern(term), escape=LIKE_ESCAPE))
+    stmt = stmt.order_by(
+        func.coalesce(func.sum(UsageRecord.cost_cny), 0.0).desc(), UsageRecord.model.asc()
+    )
+    rows, total = await paginate(db, stmt, params)
+    return make_page(
+        [
+            ModelUsage(model=r.model, calls=r.calls, total_tokens=r.tokens, cost_cny=round(r.cost, 6))
+            for r in rows
+        ],
+        total,
+        params,
+    )

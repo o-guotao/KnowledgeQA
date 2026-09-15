@@ -1,4 +1,4 @@
-import { BookOpenText, Database, Gauge, Loader2, Quote, ShieldCheck } from "lucide-react";
+import { BookOpenText, Database, Eye, EyeOff, Gauge, Loader2, Quote, ShieldCheck } from "lucide-react";
 import { useState } from "react";
 import type { FormEvent } from "react";
 import { useNavigate } from "react-router-dom";
@@ -21,6 +21,7 @@ export function LoginPage() {
   const [error, setError] = useState<string | null>(null);
   const [loading, setLoading] = useState(false);
   const [shake, setShake] = useState(false);
+  const [showPassword, setShowPassword] = useState(false);
 
   const submit = async (e: FormEvent) => {
     e.preventDefault();
@@ -44,15 +45,8 @@ export function LoginPage() {
     <div className="flex min-h-screen bg-theme-deep text-theme-text">
       {/* 左半品牌区：沉稳深墨底 + 网格纹理 + 品牌光晕点缀（克制配色） */}
       <div className="relative hidden flex-1 flex-col justify-between overflow-hidden p-12 lg:flex">
-        <div className="pointer-events-none absolute inset-0 bg-gradient-to-br from-slate-950 via-[#101826] to-theme-deep" />
-        <div
-          className="pointer-events-none absolute inset-0 opacity-[0.15]"
-          style={{
-            backgroundImage:
-              "linear-gradient(rgba(255,255,255,0.06) 1px, transparent 1px), linear-gradient(90deg, rgba(255,255,255,0.06) 1px, transparent 1px)",
-            backgroundSize: "44px 44px",
-          }}
-        />
+        <div className="pointer-events-none absolute inset-0 bg-gradient-to-br from-theme-deep via-theme-bg to-theme-deep" />
+        <div className="login-grid pointer-events-none absolute inset-0 opacity-[0.15]" />
         <div className="pointer-events-none absolute -left-32 -top-32 h-96 w-96 rounded-full bg-brand/20 blur-3xl" />
         <div className="pointer-events-none absolute bottom-0 right-0 h-80 w-80 rounded-full bg-brand/10 blur-3xl" />
 
@@ -116,20 +110,33 @@ export function LoginPage() {
                   id="username"
                   value={username}
                   onChange={(e) => setUsername(e.target.value)}
+                  placeholder="请输入用户名"
                   autoComplete="username"
                   required
                 />
               </div>
               <div className="space-y-1.5">
                 <label htmlFor="password" className="text-sm font-medium text-theme-text">密码</label>
-                <Input
-                  id="password"
-                  type="password"
-                  value={password}
-                  onChange={(e) => setPassword(e.target.value)}
-                  autoComplete="current-password"
-                  required
-                />
+                <div className="relative">
+                  <Input
+                    id="password"
+                    type={showPassword ? "text" : "password"}
+                    value={password}
+                    onChange={(e) => setPassword(e.target.value)}
+                    placeholder="请输入密码"
+                    autoComplete="current-password"
+                    className="pr-10"
+                    required
+                  />
+                  <button
+                    type="button"
+                    onClick={() => setShowPassword((v) => !v)}
+                    aria-label={showPassword ? "隐藏密码" : "显示密码"}
+                    className="absolute inset-y-0 right-0 flex w-10 items-center justify-center text-theme-sub hover:text-theme-text cursor-pointer"
+                  >
+                    {showPassword ? <EyeOff size={16} /> : <Eye size={16} />}
+                  </button>
+                </div>
               </div>
               {error && (
                 <p role="alert" className="rounded-md border border-red-500/30 bg-red-500/10 px-3 py-2 text-sm text-red-400">
@@ -140,9 +147,6 @@ export function LoginPage() {
                 {loading && <Loader2 size={16} className="animate-spin" />}
                 {loading ? "登录中…" : "登录"}
               </Button>
-              <p className="rounded-md border border-theme-line bg-theme-input px-3 py-2 text-center text-xs text-theme-sub">
-                演示账号：demo / demo1234（由后端 seed 脚本创建）
-              </p>
             </form>
           </div>
 
