@@ -21,10 +21,13 @@ app = FastAPI(
 app.add_middleware(TraceMiddleware)
 app.add_middleware(
     CORSMiddleware,
+    # 带凭证的跨域规范约束：三者都不能是字面 *。origins 已由配置显式给出；
+    # methods/headers 显式声明（Starlette 对 ["*"] 虽会展开/镜像而非发字面 *，
+    # 但显式列表更清晰、也避免镜像回显的隐式行为）
     allow_origins=[o.strip() for o in settings.cors_origins.split(",") if o.strip()],
     allow_credentials=True,
-    allow_methods=["*"],
-    allow_headers=["*"],
+    allow_methods=["GET", "POST", "PATCH", "DELETE", "OPTIONS"],
+    allow_headers=["Authorization", "Content-Type"],
 )
 
 register_error_handlers(app)
