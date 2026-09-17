@@ -35,6 +35,8 @@ class Settings(BaseSettings):
     # 鉴权
     jwt_secret: str = "dev-only-secret"
     jwt_expire_minutes: int = 720
+    # 开放注册开关：false 时 POST /auth/register 返回 403
+    registration_enabled: bool = True
 
     # CORS（虚机部署改为实际前端域名，逗号分隔）
     cors_origins: str = "http://localhost:5173,http://127.0.0.1:5173"

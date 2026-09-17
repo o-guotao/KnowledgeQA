@@ -12,6 +12,28 @@
 
 ## [未发布]
 
+## [0.4.0] - 2026-09-17
+
+### 新增
+
+- **开放注册**：`POST /auth/register`（用户名查重 409、密码强度/长度校验 400，role 固定 user，不发 token 不写 Cookie），前端 `/register` 注册页（复用登录页视觉，含确认密码本地校验），注册成功跳回登录页展示「注册成功，请登录」；`REGISTRATION_ENABLED` 开关（local 默认开、production 默认关）
+- **多模态文档**：新增图片（png/jpg/jpeg/webp）上传（仅预览不入库，复用 no_text 终态）与 docx/xlsx 上传（python-docx/openpyxl 提取段落+表格/逐 sheet 文本入库，RAG 可检索）；上传白名单、accept、提示文案、列表文件类型图标同步扩展；新依赖 python-docx、openpyxl
+- **文档预览按类型分发**：图片原图 blob 预览（点击缩放）、docx 用 docx-preview 保留排版、xlsx 用 SheetJS 结构化渲染（sheet 切换 tab、表头吸顶、超 500 行截断提示）；前端新依赖 docx-preview、xlsx（均动态 import 不增主 bundle）
+- **PDF 表格结构化**：PDF 提取由 pypdf 换为 pdfplumber，表格转 Markdown 管道表保留行列语义、正文排除表格区域避免重复；上传探测改轻量 `pdf_has_text`（只看前 3 页）避免大 PDF 拖慢上传；新依赖 pdfplumber
+- 公安备案号页脚展示，`VITE_GA_NUMBER` 构建期覆盖
+
+### 安全
+
+- **注册/登录限流**：进程内滑动窗口（注册 10 次/分钟/IP、登录 20 次/分钟/IP，超限 429），防批量注册刷库、用户名枚举与口令爆破；多实例部署需换 Redis 共享存储
+- **xlsx 预览 XSS 修复**：弃用 `sheet_to_html`（其 `data-v` 属性未转义，单元格含双引号可属性突破注入），改为 `sheet_to_json` + React 原生渲染
+- **docx 预览禁用外部链接跳转**：渲染后移除 `<a>` href，团队文档夹带的外部链接只展示不可点击
+- **用户名归一化**：注册/登录/管理员建用户统一 strip + 小写，杜绝大小写产生两个账号；注册唯一索引竞态兜底转 409
+
+### 变更
+
+- reingest 放开 no_text 逃生通道：pdf/docx/xlsx 的 no_text 文档允许重切（救回「前几页纯图」误判，仍无文本落 failed），图片文件仍拒绝
+- 登录页/注册页页脚版本号由硬编码改为 `/api/meta/version` 动态获取
+
 ### 变更（破坏性）
 
 - **列表接口返回形状改为分页信封**：所有列表接口（`/documents`、`/documents/team`、

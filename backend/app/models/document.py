@@ -8,7 +8,8 @@ from app.db import Base
 from app.storage_compat import UUIDType
 
 # uploaded -> processing -> ready / failed
-# no_text：上传时即判定为纯图片 PDF（无文字层），保留原文件但不投递切分任务，供预览/将来 OCR
+# no_text：图片文件（png/jpg/webp）或无文字层 PDF/无文本内容 Office 文档，
+# 保留原文件但不投递切分任务，供预览/将来 OCR
 DOCUMENT_STATUSES = ("uploaded", "processing", "ready", "failed", "no_text")
 
 

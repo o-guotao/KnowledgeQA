@@ -114,11 +114,15 @@ async def list_users(
 async def create_user(body: AdminUserCreate, db: AsyncSession = Depends(get_db)) -> AdminUserOut:
     if body.role not in VALID_ROLES:
         raise AppError("BAD_ROLE", "role 必须是 user 或 admin", 400)
-    exists = (await db.execute(select(User).where(User.username == body.username))).scalar_one_or_none()
+    # 用户名归一化（与注册/登录一致）：去首尾空白 + 小写
+    username = body.username.strip().lower()
+    if not username:
+        raise AppError("BAD_USERNAME", "用户名不能为空", 400)
+    exists = (await db.execute(select(User).where(User.username == username))).scalar_one_or_none()
     if exists is not None:
         raise AppError("USERNAME_TAKEN", "用户名已存在", 409)
     user = User(
-        username=body.username,
+        username=username,
         password_hash=hash_password(body.password),
         display_name=body.display_name,
         role=body.role,

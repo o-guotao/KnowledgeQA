@@ -1,7 +1,7 @@
 {
   "name": "web-agent-frontend",
   "private": true,
-  "version": "0.3.0",
+  "version": "0.4.0",
   "type": "module",
   "scripts": {
     "dev": "vite",
@@ -12,6 +12,7 @@
   "dependencies": {
     "class-variance-authority": "^0.7.0",
     "clsx": "^2.1.1",
+    "docx-preview": "^0.4.0",
     "lucide-react": "^0.453.0",
     "pdfjs-dist": "^4.10.38",
     "react": "^18.3.1",
@@ -22,6 +23,7 @@
     "recharts": "^3.10.1",
     "remark-gfm": "^4.0.0",
     "tailwind-merge": "^2.5.5",
+    "xlsx": "^0.18.5",
     "zod": "^3.23.8"
   },
   "devDependencies": {

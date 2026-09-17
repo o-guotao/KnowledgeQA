@@ -1,4 +1,4 @@
-import { ArrowLeft, Eye, FileUp, Layers, Loader2, Quote, RefreshCw, Share2, Trash2, Users, X } from "lucide-react";
+import { ArrowLeft, Eye, FileSpreadsheet, FileText, FileUp, Image as ImageIcon, Layers, Loader2, Quote, RefreshCw, Share2, Trash2, Users, X } from "lucide-react";
 import { useCallback, useEffect, useRef, useState } from "react";
 import { useNavigate } from "react-router-dom";
 import { z } from "zod";
@@ -14,7 +14,7 @@ import {
 } from "../api/schemas";
 import { useAuth } from "../auth/AuthContext";
 import { ConfirmDialog } from "../components/ConfirmDialog";
-import { DocumentPreviewModal } from "../components/DocumentPreviewModal";
+import { DocumentPreviewModal, docKind } from "../components/DocumentPreviewModal";
 import { ThemeToggle } from "../components/ThemeToggle";
 import { Badge } from "../components/ui/badge";
 import { Button } from "../components/ui/button";
@@ -33,7 +33,7 @@ const STATUS_META: Record<KnowledgeDocument["status"], { label: string; variant:
 const PENDING_STATUSES: KnowledgeDocument["status"][] = ["uploaded", "processing"];
 
 // 与后端校验保持一致：扩展名白名单、20MB、文件名规则（见 backend/app/api/documents.py）
-const ALLOWED_EXTS = [".txt", ".md", ".markdown", ".pdf"];
+const ALLOWED_EXTS = [".txt", ".md", ".markdown", ".pdf", ".png", ".jpg", ".jpeg", ".webp", ".docx", ".xlsx"];
 const MAX_UPLOAD_BYTES = 20 * 1024 * 1024;
 const FORBIDDEN_FILENAME_CHARS = /[<>:"/\\|?*]/;
 const CONTROL_CHARS = /[\u0000-\u001f\u007f]/;
@@ -50,6 +50,16 @@ interface PendingFile {
 function fileExt(name: string): string {
   const dot = name.lastIndexOf(".");
   return dot >= 0 ? name.slice(dot).toLowerCase() : "";
+}
+
+/** 列表行文件类型图标：按扩展名区分颜色 */
+function FileTypeIcon({ name }: { name: string }) {
+  const k = docKind(name);
+  if (k === "image") return <ImageIcon size={15} className="shrink-0 text-emerald-400" aria-hidden />;
+  if (k === "xlsx") return <FileSpreadsheet size={15} className="shrink-0 text-indigo-400" aria-hidden />;
+  if (k === "docx") return <FileText size={15} className="shrink-0 text-blue-400" aria-hidden />;
+  if (k === "pdf") return <FileText size={15} className="shrink-0 text-red-400" aria-hidden />;
+  return <FileText size={15} className="shrink-0 text-slate-400" aria-hidden />;
 }
 
 /** 文件名规则：与后端 `_normalize_filename` 对齐；返回错误文案，合法返回 null。 */
@@ -181,7 +191,7 @@ export function DocumentsPage() {
     for (const file of files) {
       const problems: string[] = [];
       const ext = fileExt(file.name);
-      if (!ALLOWED_EXTS.includes(ext)) problems.push("仅支持 .txt/.md/.markdown/.pdf");
+      if (!ALLOWED_EXTS.includes(ext)) problems.push("仅支持 .txt/.md/.pdf/.png/.jpg/.webp/.docx/.xlsx");
       if (file.size === 0) problems.push("文件内容为空");
       if (file.size > MAX_UPLOAD_BYTES) problems.push("超过 20MB 上限");
       const nameErr = filenameError(file.name);
@@ -382,7 +392,7 @@ export function DocumentsPage() {
               ref={fileRef}
               type="file"
               multiple
-              accept=".txt,.md,.markdown,.pdf"
+              accept=".txt,.md,.markdown,.pdf,.png,.jpg,.jpeg,.webp,.docx,.xlsx"
               className="hidden"
               onChange={(e) => {
                 void onSelectFiles(e.target.files);
@@ -393,7 +403,7 @@ export function DocumentsPage() {
             <input
               ref={updateFileRef}
               type="file"
-              accept=".txt,.md,.markdown,.pdf"
+              accept=".txt,.md,.markdown,.pdf,.png,.jpg,.jpeg,.webp,.docx,.xlsx"
               className="hidden"
               onChange={(e) => {
                 void onSelectUpdateFile(e.target.files);
@@ -423,8 +433,8 @@ export function DocumentsPage() {
 
         {tab === "mine" && (
         <p className="max-w-3xl text-sm leading-6 text-theme-sub">
-          上传制度、手册或 FAQ（.txt/.md/.pdf，单个 ≤ 20MB，可一次多选）。系统对重复内容/纯图片 PDF 做校验并明确提示；
-          合规文档自动切分入库，之后即可在问答中检索并带引用回答。
+          上传制度、手册或 FAQ（.txt/.md/.pdf/.docx/.xlsx，图片 .png/.jpg/.webp 仅预览不检索，单个 ≤ 20MB，可一次多选）。
+          系统对重复内容/纯图片文件做校验并明确提示；合规文档自动切分入库，之后即可在问答中检索并带引用回答。
           {pendingCount > 0 && " 有文档正在处理，将自动刷新直到完成。"}
         </p>
         )}
@@ -623,6 +633,7 @@ export function DocumentsPage() {
                   <CardContent className="flex flex-col gap-2 py-4 sm:flex-row sm:items-center sm:justify-between">
                     <div className="min-w-0">
                       <div className="flex flex-wrap items-center gap-2">
+                        <FileTypeIcon name={d.filename} />
                         <p className="truncate font-medium text-theme-text">{d.filename}</p>
                         <Badge variant={meta.variant}>{meta.label}</Badge>
                         {d.stale && (
@@ -702,7 +713,7 @@ export function DocumentsPage() {
               {!isFiltering && (<>
               <div className="mt-8 grid w-full max-w-xl gap-3 sm:grid-cols-3">
                 {[
-                  { icon: FileUp, title: "上传文档", desc: ".txt/.md/.pdf，单个 ≤20MB" },
+                  { icon: FileUp, title: "上传文档", desc: ".txt/.md/.pdf/Office/图片，≤20MB" },
                   { icon: Layers, title: "自动切分入库", desc: "向量化、可检索" },
                   { icon: Quote, title: "问答带引用", desc: "答案点回原文出处" },
                 ].map((f) => (
@@ -728,7 +739,7 @@ export function DocumentsPage() {
                 d.status === "ready"
                   ? "可用于问答"
                   : d.status === "no_text"
-                    ? "纯图片 PDF，无文字层，不可检索"
+                    ? "图片或无文字层文档，不可检索"
                     : "处理中…";
               return (
                 <Card key={d.id} className="transition-shadow hover:shadow-card">
@@ -742,6 +753,7 @@ export function DocumentsPage() {
                     />
                     <div className="min-w-0">
                       <div className="flex flex-wrap items-center gap-2">
+                        <FileTypeIcon name={d.filename} />
                         <p className="truncate font-medium text-theme-text">{d.filename}</p>
                         <Badge variant={meta.variant}>{meta.label}</Badge>
                         <span className="text-xs text-theme-sub" title={`内容版本 v${d.version}`}>

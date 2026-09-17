@@ -27,6 +27,7 @@ PROFILE_DEFAULTS: dict[str, dict[str, Any]] = {
         "allow_hash_embedding": True,
         "rerank_enabled": False,
         "hybrid_search_enabled": True,
+        "registration_enabled": True,  # 本地演示默认开放注册
     },
     # 线上：Docker 全套生产依赖。
     # Postgres+pgvector + MinIO + fastembed 本地向量 + 重排；禁止无语义 hash 降级（启动校验 fail fast）。
@@ -39,5 +40,6 @@ PROFILE_DEFAULTS: dict[str, dict[str, Any]] = {
         "allow_hash_embedding": False,
         "rerank_enabled": True,
         "hybrid_search_enabled": True,
+        "registration_enabled": False,  # 生产默认关闭开放注册，需显式 REGISTRATION_ENABLED=true 开启
     },
 }

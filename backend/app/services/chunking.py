@@ -30,18 +30,170 @@ class SemanticBlock:
     children: list[ChunkData] = field(default_factory=list)
 
 
+def _extract_docx(data: bytes) -> str:
+    """docx：段落 + 表格（逐行 tab 拼接单元格），保持阅读顺序。"""
+    import docx  # 懒加载
+
+    document = docx.Document(io.BytesIO(data))
+    parts: list[str] = []
+    # 按文档体顺序遍历（段落与表格交错），比先段落后表格更保序
+    from docx.table import Table
+    from docx.text.paragraph import Paragraph
+
+    for block in _iter_block_items(document):
+        if isinstance(block, Paragraph):
+            text = block.text.strip()
+            if text:
+                parts.append(text)
+        elif isinstance(block, Table):
+            for row in block.rows:
+                cells = [c.text.strip() for c in row.cells]
+                if any(cells):
+                    parts.append("\t".join(cells))
+    return "\n".join(parts).strip()
+
+
+def _iter_block_items(parent):
+    """按顺序产出 docx 文档体中的段落与表格（python-docx 未提供官方 API）。"""
+    from docx.document import Document as _Document
+    from docx.oxml.table import CT_Tbl
+    from docx.oxml.text.paragraph import CT_P
+    from docx.table import Table
+    from docx.text.paragraph import Paragraph
+
+    body = parent.element.body if isinstance(parent, _Document) else parent._element
+    for child in body.iterchildren():
+        if isinstance(child, CT_P):
+            yield Paragraph(child, parent)
+        elif isinstance(child, CT_Tbl):
+            yield Table(child, parent)
+
+
+def _extract_xlsx(data: bytes) -> str:
+    """xlsx：逐 sheet 提取，每行 tab 拼接，sheet 间以标题分隔保留表格语义。"""
+    import openpyxl  # 懒加载
+
+    wb = openpyxl.load_workbook(io.BytesIO(data), read_only=True, data_only=True)
+    try:
+        parts: list[str] = []
+        for ws in wb.worksheets:
+            lines: list[str] = []
+            for row in ws.iter_rows(values_only=True):
+                cells = [("" if v is None else str(v)).strip() for v in row]
+                if any(cells):
+                    lines.append("\t".join(cells))
+            if lines:
+                parts.append(f"## Sheet: {ws.title}\n" + "\n".join(lines))
+        return "\n\n".join(parts).strip()
+    finally:
+        # read_only 模式也需显式关闭，释放打开的 zip 句柄
+        wb.close()
+
+
+def _in_any_bbox(word: dict, bboxes: list) -> bool:
+    """词是否完全落在任一表格区域内（页内正文文字通常在表格框外）。"""
+    for bx0, btop, bx1, bbottom in bboxes:
+        if (
+            word["x0"] >= bx0
+            and word["x1"] <= bx1
+            and word["top"] >= btop
+            and word["bottom"] <= bbottom
+        ):
+            return True
+    return False
+
+
+def _words_to_text(words: list[dict]) -> str:
+    """词按 top 聚成行、行内按 x 排序，还原页面正文（表格外区域）。"""
+    if not words:
+        return ""
+    ordered = sorted(words, key=lambda w: (w["top"], w["x0"]))
+    lines: list[str] = []
+    cur: list[str] = []
+    cur_top: float | None = None
+    for w in ordered:
+        if cur_top is None or abs(w["top"] - cur_top) <= 3:
+            if cur_top is None:
+                cur_top = w["top"]
+            cur.append(w["text"])
+        else:
+            lines.append(" ".join(cur))
+            cur = [w["text"]]
+            cur_top = w["top"]
+    lines.append(" ".join(cur))
+    return "\n".join(lines)
+
+
+def _rows_to_markdown(rows: list[list]) -> str:
+    """表格行列表转 Markdown 管道表（首行为表头），保留行列语义便于检索。"""
+    if not rows or not any(any(c is not None and str(c).strip() for c in r) for r in rows):
+        return ""
+
+    def cell(v) -> str:
+        s = "" if v is None else str(v).replace("\n", " ").replace("|", "\\|").strip()
+        return s if s else " "
+
+    width = max(len(r) for r in rows)
+    lines = ["| " + " | ".join(cell(c) for c in rows[0]) + " |"]
+    lines.append("|" + " --- |" * width)
+    for r in rows[1:]:
+        padded = list(r) + [None] * (width - len(r))
+        lines.append("| " + " | ".join(cell(c) for c in padded) + " |")
+    return "\n".join(lines)
+
+
+def _extract_pdf(data: bytes) -> str:
+    """PDF：pdfplumber 逐页提取正文 + 表格。
+
+    - 表格（含矢量线框的表格）转 Markdown 管道表，保留行列对应关系；
+    - 正文文字排除表格区域后按行还原，避免表格内容在正文里重复出现；
+    - 页与页之间空行分隔，表格紧随其所在位置之后。
+    """
+    import pdfplumber  # 懒加载
+
+    parts: list[str] = []
+    with pdfplumber.open(io.BytesIO(data)) as pdf:
+        for page in pdf.pages:
+            tables = page.find_tables()
+            bboxes = [t.bbox for t in tables]
+            words = [w for w in page.extract_words() if not _in_any_bbox(w, bboxes)]
+            text = _words_to_text(words)
+            if text.strip():
+                parts.append(text.strip())
+            for t in tables:
+                md = _rows_to_markdown(t.extract() or [])
+                if md:
+                    parts.append(md)
+    return "\n\n".join(parts).strip()
+
+
+def pdf_has_text(data: bytes, max_pages: int = 3) -> bool:
+    """上传探测：只看前几页是否存在文字层（纯图片/扫描 PDF 每页都没有文字）。
+
+    pdfplumber 全量提取比 pypdf 慢，探测用它避免大 PDF 拖慢上传请求；
+    探测不到而后续页有文字的极端混合 PDF 会由 worker 落入 failed 并可重试。
+    """
+    import pdfplumber  # 懒加载
+
+    with pdfplumber.open(io.BytesIO(data)) as pdf:
+        for page in pdf.pages[:max_pages]:
+            if page.extract_words():
+                return True
+    return False
+
+
 def extract_text(filename: str, data: bytes) -> str:
-    """按扩展名提取纯文本。支持 .txt/.md/.pdf。"""
+    """按扩展名提取纯文本。支持 .txt/.md/.pdf/.docx/.xlsx（PDF 表格结构化为 Markdown）。"""
     name = filename.lower()
     if name.endswith(".pdf"):
-        from pypdf import PdfReader  # 懒加载
-
-        reader = PdfReader(io.BytesIO(data))
-        pages = [page.extract_text() or "" for page in reader.pages]
-        return "\n\n".join(pages).strip()
+        return _extract_pdf(data)
+    if name.endswith(".docx"):
+        return _extract_docx(data)
+    if name.endswith(".xlsx"):
+        return _extract_xlsx(data)
     if name.endswith((".txt", ".md", ".markdown")):
         return data.decode("utf-8", errors="replace").strip()
-    raise ValueError(f"不支持的文件类型：{filename}（仅支持 .txt/.md/.pdf）")
+    raise ValueError(f"不支持的文件类型：{filename}（仅支持 .txt/.md/.pdf/.docx/.xlsx/图片）")
 
 
 def split_text(text: str, chunk_size: int, overlap: int) -> list[ChunkData]:

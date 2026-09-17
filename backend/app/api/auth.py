@@ -1,5 +1,9 @@
-from fastapi import APIRouter, Depends, Response
+import time
+from collections import defaultdict, deque
+
+from fastapi import APIRouter, Depends, Request, Response
 from sqlalchemy import select
+from sqlalchemy.exc import IntegrityError
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.config import get_settings
@@ -13,19 +17,43 @@ from app.core.security import (
 )
 from app.db import get_db
 from app.models.user import User
-from app.schemas.auth import LoginRequest, PasswordChange, TokenResponse, UserOut
+from app.schemas.auth import LoginRequest, PasswordChange, RegisterRequest, TokenResponse, UserOut
 
 router = APIRouter()
+
+# 进程内滑动窗口限流（单实例部署按 IP 计数；多实例部署需换 Redis 等共享存储）。
+# 防脚本批量注册刷库、用户名枚举与口令爆破。
+_RATE_LIMITS = {
+    "login": (20, 60),  # 每分钟每 IP 20 次
+    "register": (10, 60),  # 每分钟每 IP 10 次
+}
+_rate_hits: dict[str, deque[float]] = defaultdict(deque)
+
+
+def _rate_limit(request: Request, bucket: str) -> None:
+    ip = request.client.host if request.client else "unknown"
+    key = f"{bucket}:{ip}"
+    max_hits, window = _RATE_LIMITS[bucket]
+    now = time.monotonic()
+    hits = _rate_hits[key]
+    while hits and now - hits[0] > window:
+        hits.popleft()
+    if len(hits) >= max_hits:
+        raise AppError("RATE_LIMITED", "请求过于频繁，请稍后再试", 429)
+    hits.append(now)
 
 
 @router.post("/auth/login", response_model=TokenResponse)
 async def login(
     body: LoginRequest,
     response: Response,
+    request: Request,
     db: AsyncSession = Depends(get_db),
 ) -> TokenResponse:
+    _rate_limit(request, "login")
+    # 用户名归一化（与注册一致）：大小写归一，避免 Demo/demo 两个账号
     user = (
-        await db.execute(select(User).where(User.username == body.username))
+        await db.execute(select(User).where(User.username == body.username.strip().lower()))
     ).scalar_one_or_none()
     if user is None or not verify_password(body.password, user.password_hash):
         raise AppError("BAD_CREDENTIALS", "用户名或密码错误", 401)
@@ -80,3 +108,43 @@ async def change_password(
         raise AppError("SAME_PASSWORD", "新密码不能与当前密码相同", 400)
     user.password_hash = hash_password(body.new_password)
     await db.commit()
+
+
+@router.post("/auth/register", response_model=UserOut, status_code=201)
+async def register(body: RegisterRequest, request: Request, db: AsyncSession = Depends(get_db)) -> UserOut:
+    """开放注册：role 固定 user；不发 token、不写 Cookie，前端注册成功后跳回登录页。
+
+    密码强度校验放端点内（同 change_password）：AppError 统一错误形状便于前端透出文案。
+    """
+    _rate_limit(request, "register")
+    setting = get_settings()
+    if not setting.registration_enabled:
+        raise AppError("REGISTRATION_DISABLED", "注册已关闭", 403)
+    # 用户名归一化：去首尾空白 + 小写（登录查询同样归一，大小写不产生两个账号）
+    username = body.username.strip().lower()
+    if not username:
+        raise AppError("BAD_USERNAME", "用户名不能为空", 400)
+    exists = (await db.execute(select(User).where(User.username == username))).scalar_one_or_none()
+    if exists is not None:
+        raise AppError("USERNAME_TAKEN", "用户名已存在", 409)
+    if len(body.password) < 8:
+        raise AppError("WEAK_PASSWORD", "密码至少 8 位", 400)
+    if len(body.password.encode("utf-8")) > 72:
+        # bcrypt 硬限制：超过 72 字节会 raise ValueError（避免 500）
+        raise AppError("PASSWORD_TOO_LONG", "密码过长（按 UTF-8 计不超过 72 字节）", 400)
+    user = User(
+        username=username,
+        password_hash=hash_password(body.password),
+        display_name=body.display_name.strip(),
+        role="user",
+    )
+
+    db.add(user)
+    try:
+        await db.flush()
+        await db.commit()
+    except IntegrityError:
+        # 并发注册兜底：username 唯一索引拦下，翻译为用户可读 409（与上传判重同模式）
+        await db.rollback()
+        raise AppError("USERNAME_TAKEN", "用户名已存在", 409)
+    return UserOut.model_validate(user)

@@ -70,6 +70,18 @@ fastembed~=0.4.0
 # 使用位置：app/services/chunking.py（懒加载 PdfReader）
 pypdf~=5.0.0
 
+# PDF 表格结构化提取（pdfplumber：正文 + 表格转 Markdown；上传探测 pdf_has_text）
+# 使用位置：app/services/chunking.py（懒加载 pdfplumber）
+pdfplumber~=0.11.0
+
+# Word 文档文本提取（docx：段落 + 表格）
+# 使用位置：app/services/chunking.py（懒加载 docx.Document）
+python-docx~=1.1.0
+
+# Excel 表格文本提取（xlsx：逐 sheet 逐行）
+# 使用位置：app/services/chunking.py（懒加载 openpyxl.load_workbook）
+openpyxl~=3.1.0
+
 # BM25 关键词排序（混合检索的关键词一路）
 # 使用位置：app/services/bm25_index.py
 rank-bm25~=0.2.2

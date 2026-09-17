@@ -45,16 +45,61 @@ router = APIRouter()
 
 MAX_UPLOAD_BYTES = 20 * 1024 * 1024  # 20MB
 
+# 上传白名单与分类：图片仅预览不切分；pdf/docx/xlsx 在请求内做可解析探测
+ALLOWED_EXTENSIONS = (
+    ".txt", ".md", ".markdown", ".pdf",
+    ".png", ".jpg", ".jpeg", ".webp",
+    ".docx", ".xlsx",
+)
+IMAGE_EXTENSIONS = (".png", ".jpg", ".jpeg", ".webp")
+PROBE_EXTENSIONS = (".pdf", ".docx", ".xlsx")
+
 
 def _media_type(filename: str) -> str:
     name = filename.lower()
     if name.endswith(".pdf"):
         return "application/pdf"
-    if name.endswith(".markdown"):
+    if name.endswith((".markdown", ".md")):
         return "text/markdown; charset=utf-8"
-    if name.endswith(".md"):
-        return "text/markdown; charset=utf-8"
+    if name.endswith(".png"):
+        return "image/png"
+    if name.endswith((".jpg", ".jpeg")):
+        return "image/jpeg"
+    if name.endswith(".webp"):
+        return "image/webp"
+    if name.endswith(".docx"):
+        return "application/vnd.openxmlformats-officedocument.wordprocessingml.document"
+    if name.endswith(".xlsx"):
+        return "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
     return "text/plain; charset=utf-8"
+
+
+def _detect_status(filename: str, data: bytes) -> str:
+    """上传探测：图片与无文字层/无文本内容文档 → no_text（仅预览不切分），其余 uploaded 入队。
+
+    pdf/docx/xlsx 损坏或加密时在请求内明确 4xx 拒绝，避免落入 worker 才 failed。
+    PDF 用轻量探测（只看前几页有无文字层），避免 pdfplumber 全量解析拖慢上传请求。
+    """
+    name = filename.lower()
+    if name.endswith(IMAGE_EXTENSIONS):
+        return "no_text"
+    if name.endswith(".pdf"):
+        from app.services.chunking import pdf_has_text  # 懒加载
+
+        try:
+            no_text = not pdf_has_text(data)
+        except Exception:
+            raise AppError("BAD_FILE_TYPE", "PDF 无法解析（文件损坏或已加密），未保存", 400)
+        return "no_text" if no_text else "uploaded"
+    if name.endswith((".docx", ".xlsx")):
+        from app.services.chunking import extract_text  # 懒加载
+
+        try:
+            no_text = not extract_text(filename, data)
+        except Exception:
+            raise AppError("BAD_FILE_TYPE", "文件无法解析（文件损坏或已加密），未保存", 400)
+        return "no_text" if no_text else "uploaded"
+    return "uploaded"
 
 # 文件名规则：取 basename；禁控制字符与 <>:"/\|?*；去首尾空白与点；长度 1..255（库列 String(256)）
 _FORBIDDEN_FILENAME_CHARS = set('<>:"/\\|?*')
@@ -135,8 +180,8 @@ async def upload_document(
     if len(data) > MAX_UPLOAD_BYTES:
         raise AppError("FILE_TOO_LARGE", "文件超过 20MB 限制", 413)
     filename = _normalize_filename(file.filename)
-    if not filename.lower().endswith((".txt", ".md", ".markdown", ".pdf")):
-        raise AppError("BAD_FILE_TYPE", "仅支持 .txt/.md/.pdf")
+    if not filename.lower().endswith(ALLOWED_EXTENSIONS):
+        raise AppError("BAD_FILE_TYPE", "仅支持 .txt/.md/.pdf/.png/.jpg/.webp/.docx/.xlsx")
 
     content_hash = hashlib.sha256(data).hexdigest()
     dup = (
@@ -149,18 +194,8 @@ async def upload_document(
     if dup is not None:
         raise AppError("DUPLICATE_DOCUMENT", f"内容已存在，原文件：{dup}", 409)
 
-    # 纯图片 PDF（无文字层）：保留原文件但不投递切分任务，进入 no_text 终态供预览/将来 OCR
-    status = "uploaded"
-    if filename.lower().endswith(".pdf"):
-        from app.services.chunking import extract_text  # 懒加载
-
-        try:
-            no_text = not extract_text(filename, data)
-        except Exception:
-            # 加密/损坏的 PDF 无法提取文本：在请求内明确 4xx 拒绝，避免落入 worker 才 failed
-            raise AppError("BAD_FILE_TYPE", "PDF 无法解析（文件损坏或已加密），未保存", 400)
-        if no_text:
-            status = "no_text"
+    # 图片与无文字层/无文本内容文档：保留原文件但不投递切分任务，进入 no_text 终态供预览
+    status = _detect_status(filename, data)
 
     settings = get_settings()
     tag_list = [t.strip() for t in tags.split(",") if t.strip()][:20]
@@ -407,8 +442,8 @@ async def update_document_content(
     if len(data) > MAX_UPLOAD_BYTES:
         raise AppError("FILE_TOO_LARGE", "文件超过 20MB 限制", 413)
     filename = _normalize_filename(file.filename)
-    if not filename.lower().endswith((".txt", ".md", ".markdown", ".pdf")):
-        raise AppError("BAD_FILE_TYPE", "仅支持 .txt/.md/.pdf")
+    if not filename.lower().endswith(ALLOWED_EXTENSIONS):
+        raise AppError("BAD_FILE_TYPE", "仅支持 .txt/.md/.pdf/.png/.jpg/.webp/.docx/.xlsx")
 
     content_hash = hashlib.sha256(data).hexdigest()
     if content_hash == document.content_hash:
@@ -427,17 +462,8 @@ async def update_document_content(
     if dup is not None:
         raise AppError("DUPLICATE_DOCUMENT", f"内容已存在，原文件：{dup}", 409)
 
-    # PDF 探测（与上传一致）：不可解析 4xx 拒绝；无文字层进 no_text
-    status = "uploaded"
-    if filename.lower().endswith(".pdf"):
-        from app.services.chunking import extract_text  # 懒加载
-
-        try:
-            no_text = not extract_text(filename, data)
-        except Exception:
-            raise AppError("BAD_FILE_TYPE", "PDF 无法解析（文件损坏或已加密），未保存", 400)
-        if no_text:
-            status = "no_text"
+    # 文件探测（与上传一致）：不可解析 4xx 拒绝；图片/无文字层/无文本进 no_text
+    status = _detect_status(filename, data)
 
     old_object_key = document.object_key
     document.object_key = f"{user.id}/{document.id}/{filename}"
@@ -485,10 +511,14 @@ async def reingest_document(
 
     同步 chunk_size/chunk_overlap 为当前全局值，使重切后 ingest_signature 与当前
     配置一致、stale 消除；version 不变（内容未变）。
+
+    no_text 逃生通道：上传探测只看 PDF 前几页，「前几页纯图、后续页有文字」的文档会
+    被误判为 no_text，允许 pdf/docx/xlsx 重切（worker 全量提取，仍无文本则落 failed）；
+    图片文件（png/jpg/webp）无文字层是确定的，仍拒绝。
     """
     document = await _get_owned_document(document_id, user, db)
-    if document.status == "no_text":
-        raise AppError("NOT_INGESTABLE", "纯图片 PDF 无文字层，无法切分", 400)
+    if document.status == "no_text" and document.filename.lower().endswith(IMAGE_EXTENSIONS):
+        raise AppError("NOT_INGESTABLE", "图片文件无文字层，不可切分，无法检索", 400)
     if document.status in ("uploaded", "processing"):
         raise AppError("DOCUMENT_PROCESSING", "文档正在处理中，请稍后重试", 409)
 

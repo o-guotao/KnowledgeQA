@@ -8,6 +8,7 @@ import { ChatPage } from "./pages/ChatPage";
 import { DocumentsPage } from "./pages/DocumentsPage";
 import { LoginPage } from "./pages/LoginPage";
 import { ModelSettingsPage } from "./pages/ModelSettingsPage";
+import { RegisterPage } from "./pages/RegisterPage";
 import type { ReactNode } from "react";
 
 function RequireAuth({ children }: { children: ReactNode }) {
@@ -24,6 +25,7 @@ export default function App() {
       <BrowserRouter>
         <Routes>
           <Route path="/login" element={<LoginPage />} />
+          <Route path="/register" element={<RegisterPage />} />
           <Route
             path="/"
             element={

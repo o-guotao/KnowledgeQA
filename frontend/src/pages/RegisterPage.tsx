@@ -1,12 +1,22 @@
-import { BookOpenText, Database, Eye, EyeOff, Gauge, Loader2, Quote, ShieldCheck } from "lucide-react";
-import { useEffect, useState } from "react";
-import type { FormEvent } from "react";
-import { Link, useLocation, useNavigate } from "react-router-dom";
+import {
+  BookOpenText,
+  Database,
+  Eye,
+  EyeOff,
+  Gauge,
+  Loader2,
+  Quote,
+  ShieldCheck,
+} from "lucide-react";
 
-import { get } from "../api/client";
-import { VersionInfoSchema } from "../api/schemas";
-import { useAuth } from "../auth/AuthContext";
+import { FormEvent, useEffect, useState } from "react";
+
+import { Link, useNavigate } from "react-router-dom";
+import { get, post } from "../api/client";
+import { UserSchema, VersionInfoSchema } from "../api/schemas";
+
 import { Button } from "../components/ui/button";
+
 import { Input } from "../components/ui/input";
 
 const FEATURES = [
@@ -15,47 +25,60 @@ const FEATURES = [
   { icon: Gauge, title: "配额与留痕", desc: "用量可控、操作可审计" },
 ];
 
-export function LoginPage() {
-  const { login } = useAuth();
+export function RegisterPage() {
   const navigate = useNavigate();
-  const location = useLocation();
-  // 注册成功后跳回登录页时带的标记，用于展示绿色提示（仅本次导航有效）
-  const justRegistered = (location.state as { registered?: boolean } | null)?.registered === true;
-  // 应用版本号（单一来源：后端 /api/meta/version ↔ 根 VERSION 文件），不再硬编码
+  const [username, setUsername] = useState("");
+  const [displayName, setDisplayName] = useState("");
+  const [password, setPassword] = useState("");
+  const [confirmPassword, setConfirmPassword] = useState("");
+  const [error, setError] = useState<string | null>(null);
+  const [loading, setLoading] = useState(false);
+  const [shake, setShake] = useState(false);
+  const [showPassword, setShowPassword] = useState(false);
+  // 应用版本号（单一来源：后端 /api/meta/version ↔ 根 VERSION 文件）
   const [appVersion, setAppVersion] = useState("");
   useEffect(() => {
     get("/meta/version", VersionInfoSchema)
       .then((r) => setAppVersion(r.version))
       .catch(() => setAppVersion(""));
   }, []);
-  const [username, setUsername] = useState("demo");
-  const [password, setPassword] = useState("");
-  const [error, setError] = useState<string | null>(null);
-  const [loading, setLoading] = useState(false);
-  const [shake, setShake] = useState(false);
-  const [showPassword, setShowPassword] = useState(false);
 
   const submit = async (e: FormEvent) => {
     e.preventDefault();
     if (loading) return;
+    if (password.length < 8) {
+      setError("密码至少 8 位");
+      return;
+    }
+    if (password !== confirmPassword) {
+      setError("两次输入的密码不一致");
+      return;
+    }
     setLoading(true);
     setError(null);
     try {
-      await login(username.trim(), password);
-      navigate("/", { replace: true });
+      await post(
+        "/auth/register",
+        {
+          username: username.trim(),
+          password,
+          display_name: displayName.trim(),
+        },
+        UserSchema,
+      );
+      navigate("/login", { replace: true, state: { registered: true } });
     } catch (err) {
-      console.error("login failed", err);
-      setError(err instanceof Error ? err.message : "登录失败");
+      console.error("register failed", err);
+      setError(err instanceof Error ? err.message : "注册失败");
       setShake(true);
       setTimeout(() => setShake(false), 350);
     } finally {
       setLoading(false);
     }
   };
-
   return (
     <div className="flex min-h-screen bg-theme-deep text-theme-text">
-      {/* 左半品牌区：沉稳深墨底 + 网格纹理 + 品牌光晕点缀（克制配色） */}
+      {/* 左半品牌区：与登录页一致的深墨底 + 网格纹理 + 品牌光晕 */}
       <div className="relative hidden flex-1 flex-col justify-between overflow-hidden p-12 lg:flex">
         <div className="pointer-events-none absolute inset-0 bg-gradient-to-br from-theme-deep via-theme-bg to-theme-deep" />
         <div className="login-grid pointer-events-none absolute inset-0 opacity-[0.15]" />
@@ -77,7 +100,8 @@ export function LoginPage() {
               成为可追问的知识
             </h1>
             <p className="max-w-md text-sm leading-relaxed text-theme-sub">
-              上传制度、手册与 FAQ，基于 RAG 检索增强生成回答，每条答案都可点回原文出处。
+              上传制度、手册与 FAQ，基于 RAG
+              检索增强生成回答，每条答案都可点回原文出处。
             </p>
           </div>
           <ul className="space-y-4">
@@ -101,7 +125,7 @@ export function LoginPage() {
         </div>
       </div>
 
-      {/* 右半表单区：精细边框卡片 + 渐入动效 + 完整状态 */}
+      {/* 右半表单区 */}
       <div className="flex flex-1 items-center justify-center bg-theme-bg p-6">
         <div className="w-full max-w-sm animate-fade-up">
           <div className="mb-8 flex items-center gap-2 lg:hidden">
@@ -111,19 +135,22 @@ export function LoginPage() {
             <span className="text-lg font-semibold">内知 · KnowledgeQA</span>
           </div>
 
-          <div className={`rounded-2xl border border-theme-line bg-theme-card p-8 shadow-card ${shake ? "animate-shake" : ""}`}>
-            <h2 className="text-xl font-semibold tracking-tight">登录</h2>
-            <p className="mt-1 text-sm text-theme-sub">使用内部账号访问知识库</p>
-
-            {justRegistered && (
-              <p role="status" className="mt-4 rounded-md border border-emerald-500/30 bg-emerald-500/10 px-3 py-2 text-sm text-emerald-400">
-                注册成功，请登录
-              </p>
-            )}
+          <div
+            className={`rounded-2xl border border-theme-line bg-theme-card p-8 shadow-card ${shake ? "animate-shake" : ""}`}
+          >
+            <h2 className="text-xl font-semibold tracking-tight">注册</h2>
+            <p className="mt-1 text-sm text-theme-sub">
+              创建内部账号，注册后请登录
+            </p>
 
             <form onSubmit={submit} className="mt-6 space-y-4">
               <div className="space-y-1.5">
-                <label htmlFor="username" className="text-sm font-medium text-theme-text">用户名</label>
+                <label
+                  htmlFor="username"
+                  className="text-sm font-medium text-theme-text"
+                >
+                  用户名
+                </label>
                 <Input
                   id="username"
                   value={username}
@@ -134,15 +161,38 @@ export function LoginPage() {
                 />
               </div>
               <div className="space-y-1.5">
-                <label htmlFor="password" className="text-sm font-medium text-theme-text">密码</label>
+                <label
+                  htmlFor="displayName"
+                  className="text-sm font-medium text-theme-text"
+                >
+                  显示名{" "}
+                  <span className="text-xs font-normal text-theme-sub">
+                    （可选）
+                  </span>
+                </label>
+                <Input
+                  id="displayName"
+                  value={displayName}
+                  onChange={(e) => setDisplayName(e.target.value)}
+                  placeholder="用于界面展示的名字"
+                  autoComplete="nickname"
+                />
+              </div>
+              <div className="space-y-1.5">
+                <label
+                  htmlFor="password"
+                  className="text-sm font-medium text-theme-text"
+                >
+                  密码
+                </label>
                 <div className="relative">
                   <Input
                     id="password"
                     type={showPassword ? "text" : "password"}
                     value={password}
                     onChange={(e) => setPassword(e.target.value)}
-                    placeholder="请输入密码"
-                    autoComplete="current-password"
+                    placeholder="至少 8 位"
+                    autoComplete="new-password"
                     className="pr-10"
                     required
                   />
@@ -156,26 +206,55 @@ export function LoginPage() {
                   </button>
                 </div>
               </div>
+              <div className="space-y-1.5">
+                <label
+                  htmlFor="confirmPassword"
+                  className="text-sm font-medium text-theme-text"
+                >
+                  确认密码
+                </label>
+                <Input
+                  id="confirmPassword"
+                  type={showPassword ? "text" : "password"}
+                  value={confirmPassword}
+                  onChange={(e) => setConfirmPassword(e.target.value)}
+                  placeholder="再次输入密码"
+                  autoComplete="new-password"
+                  required
+                />
+              </div>
               {error && (
-                <p role="alert" className="rounded-md border border-red-500/30 bg-red-500/10 px-3 py-2 text-sm text-red-400">
+                <p
+                  role="alert"
+                  className="rounded-md border border-red-500/30 bg-red-500/10 px-3 py-2 text-sm text-red-400"
+                >
                   {error}
                 </p>
               )}
-              <Button type="submit" className="w-full shadow-soft" disabled={loading}>
+              <Button
+                type="submit"
+                className="w-full shadow-soft"
+                disabled={loading}
+              >
                 {loading && <Loader2 size={16} className="animate-spin" />}
-                {loading ? "登录中…" : "登录"}
+                {loading ? "注册中…" : "注册"}
               </Button>
             </form>
 
             <p className="mt-4 text-center text-sm text-theme-sub">
-              没有账号？
-              <Link to="/register" className="ml-1 text-brand-light hover:underline">
-                去注册
+              已有账号？
+              <Link
+                to="/login"
+                className="ml-1 text-brand-light hover:underline"
+              >
+                去登录
               </Link>
             </p>
           </div>
 
-          <p className="mt-6 text-center text-xs text-theme-sub">企业级内部知识库 · 数据不出内网</p>
+          <p className="mt-6 text-center text-xs text-theme-sub">
+            企业级内部知识库 · 数据不出内网
+          </p>
         </div>
       </div>
     </div>
