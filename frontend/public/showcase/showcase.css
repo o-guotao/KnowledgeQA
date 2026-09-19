@@ -1,0 +1,961 @@
+@charset "utf-8";
+
+/* ==========================================================================
+   滚动叙事作品集 — 样式
+   只还原 frontend/assets/示例.jpg 的「文字排版语言」，不还原它的背景。
+   全站背景恒定为 media/bg-wall.jpeg。
+   ========================================================================== */
+
+:root {
+  /* 色板：取自参考图，全站无 #000 / #fff */
+  --ink:        #EDE7DC;                  /* 奶白 */
+  --ink-dim:    rgba(237, 231, 220, .72);
+  --ink-faint:  rgba(237, 231, 220, .42);
+  --bg-deep:    #2E362F;                  /* 背景图未加载时的底色 */
+  --accent:     #E8A33D;                  /* 暖沙金，仅用于 eyebrow / 进度条 / CTA */
+
+  /* 字体
+     展示体刻意把「窄面」排在「宽面」之前。
+     Impact 宽高比约 0.45em/字符，"Arial Black" 约 0.72em/字符 —— 差 60%。
+     若把宽的排前面，没装窄面的系统上标题会横向溢出容器。
+
+     注意 iOS 与 Android 都**不自带 Impact**，所以窄面这一组必须补上这两个
+     平台上真实存在的：Roboto Condensed（Android）。落到系统无衬线时
+     （Helvetica Neue / Roboto ≈ 0.6em/字符）靠下面的字号与文案长度兜住 ——
+     见 .copy__title 的注释。 */
+  --font-display: Impact, Haettenschweiler, "Franklin Gothic Bold",
+                  "Arial Narrow", "Liberation Sans Narrow", "DejaVu Sans Condensed",
+                  "Roboto Condensed", "Arial Black", sans-serif;
+  --font-body:    "PingFang SC", "Microsoft YaHei", "Noto Sans SC",
+                  -apple-system, "Segoe UI", Roboto, sans-serif;
+
+  --fade: .5s;                            /* 段间淡入淡出时长，硬性要求 */
+  --gut:  6vw;                            /* 左右安全边距 */
+  --py:   0px;                            /* 首屏鼠标纵向微位移，由 JS 写入 */
+
+  --shadow-text: 0 1px 12px rgba(20, 24, 20, .55);   /* 只给顶部/底部 UI，不动薄纱 */
+}
+
+* { box-sizing: border-box; }
+
+html { background: var(--bg-deep); }
+
+body {
+  margin: 0;
+  background: var(--bg-deep);
+  color: var(--ink);
+  font-family: var(--font-body);
+  -webkit-font-smoothing: antialiased;
+  text-rendering: optimizeLegibility;
+  overscroll-behavior-y: none;            /* 防 iOS 橡皮筋把进度拉出 [0,1] */
+}
+
+
+/* ==========================================================================
+   0. 全站唯一固定背景 —— 恒定不变，不随板块或进度切换
+   ========================================================================== */
+
+.backdrop {
+  position: fixed;
+  inset: 0;
+  z-index: 0;
+  background-color: var(--bg-deep);
+  background-image: url(media/bg-wall.jpeg);
+  background-size: cover;
+  background-position: center;
+  background-repeat: no-repeat;
+}
+
+
+/* ==========================================================================
+   1-2. 三段舞台
+
+   要害：.stage 本身绝不能有 transform / filter / will-change。
+   那会让它成为 position:fixed 子元素的包含块，全屏铺满立刻失效。
+   位移只能落在内层的 .stage__inner 上。
+   ========================================================================== */
+
+.stage {
+  position: fixed;
+  inset: 0;
+  z-index: 1;
+  opacity: 0;
+  visibility: hidden;                     /* 不可见时移出无障碍树与命中测试 */
+  transition: opacity var(--fade) ease, visibility 0s linear var(--fade);
+  pointer-events: none;
+}
+
+.stage.is-active {
+  opacity: 1;
+  visibility: visible;
+  transition: opacity var(--fade) ease, visibility 0s;
+}
+
+.stage--intro,
+.stage--outro { z-index: 2; }
+
+.stage__inner {
+  position: absolute;
+  inset: 0;
+  transform: scale(1.06) translate3d(0, var(--py), 0);
+  will-change: transform;
+}
+
+.stage__video,
+.stage__poster {
+  position: absolute;
+  inset: 0;
+  width: 100%;
+  height: 100%;
+  object-fit: cover;
+  object-position: center;
+  display: block;
+}
+
+/* poster 垫在视频下方 —— 视频缺失或解码前自然露出，无需 JS 分支 */
+.stage__poster {
+  background-image: var(--poster);
+  background-size: cover;
+  background-position: center;
+  background-repeat: no-repeat;
+}
+
+.stage__video {
+  z-index: 1;
+  background: transparent;
+  transition: opacity .3s ease;
+}
+
+/* <video> 触发 error（素材未就位）时隐掉，露出下层 poster / backdrop */
+.stage.is-missing .stage__video { opacity: 0; }
+
+
+/* ==========================================================================
+   2.5 鼠标波纹层（v4）
+
+   位置：影像之上、薄纱之上、文字之下。
+   为什么不放在 .backdrop 上：三个 stage 全是 fixed + inset:0 + cover 满屏铺满，
+   墙面只在 main.mp4 缺失时才露得出来 —— 加在背景上等于看不见。
+
+   为什么在薄纱**之上**（而不是之下）：薄纱左侧压暗到 82% 不透明，
+   波纹压在它下面会被吃掉约 5 倍亮度，而在光标常去的左半侧恰好最暗。
+   关键提防的是「薄纱压暗 → 文字可读」，可文字在 z-index 6 —— 无论波纹在
+   3 还是 4 都盖不到它。原先写的是「波纹若盖在薄纱上，等于把文字可读性
+   交给动效负责」，那句话把薄纱当成了文字层，是错的：薄纱只是对影像的
+   一层处理，属于「影像」那一侧。所以波纹应当在它上面。
+
+   这里的 z-index 不接受小数，而 .stage--intro/--outro 已占 2，
+   所以薄纱取 3、波纹取 4。
+   画布本身只有 560×560 并随光标移动，由 JS 创建（reduced-motion / 触屏下
+   根本不创建），这里只放静态部分。
+   ========================================================================== */
+
+.ripple {
+  position: fixed;
+  top: 0;
+  left: 0;
+  z-index: 4;
+  pointer-events: none;
+  /* transform 每帧由 JS 设为光标位置。带 transform 是安全的 ——
+     它是叶子节点，没有 fixed 后代，不触发「包含块」那个陷阱。 */
+}
+
+/* ==========================================================================
+   3. 可读性薄纱 —— 压暗渐变，保留原样（用户决定）
+   盖在影像之上、波纹之下、所有文字之下。
+   ========================================================================== */
+
+.scrim {
+  position: fixed;
+  inset: 0;
+  z-index: 3;
+  pointer-events: none;
+  background: linear-gradient(
+    90deg,
+    rgba(20, 24, 20, .82) 0%,
+    rgba(20, 24, 20, .55) 34%,
+    rgba(20, 24, 20, 0)   62%
+  );
+}
+
+
+/* ==========================================================================
+   5. 顶部三栏：logo 左 / 导航中 / 署名右
+   ========================================================================== */
+
+.topbar {
+  position: fixed;
+  top: 0;
+  left: 0;
+  right: 0;
+  z-index: 5;
+  display: grid;
+  grid-template-columns: 1fr auto 1fr;
+  align-items: center;
+  gap: 2rem;
+  padding: clamp(1.1rem, 2.4vh, 2rem) var(--gut);
+  font-size: 13px;
+  letter-spacing: .06em;
+  text-shadow: var(--shadow-text);        /* 替薄纱兜住右半侧亮墙的可读性 */
+  pointer-events: none;
+}
+
+.topbar > * { pointer-events: auto; }
+
+.topbar__logo {
+  font-family: var(--font-display);
+  font-size: clamp(1.1rem, 1.6vw, 1.4rem);
+  letter-spacing: .02em;
+  text-transform: uppercase;
+}
+
+.topbar__nav {
+  display: flex;
+  gap: clamp(1rem, 2.6vw, 2.6rem);
+  justify-content: center;
+}
+
+.topbar__tab {
+  appearance: none;
+  background: none;
+  border: 0;
+  padding: 0 0 .4em;
+  margin: 0;
+  color: var(--ink-dim);
+  font: inherit;
+  letter-spacing: .08em;
+  cursor: pointer;
+  border-bottom: 1px solid transparent;   /* 激活态用下划线，与参考图一致 */
+  transition: color .25s ease, border-color .25s ease;
+}
+
+.topbar__tab:hover          { color: var(--ink); }
+.topbar__tab.is-active      { color: var(--ink); border-bottom-color: var(--accent); }
+
+.topbar__tagline {
+  justify-self: end;
+  text-align: right;
+  color: var(--ink-dim);
+  text-transform: uppercase;
+  line-height: 1.5;
+}
+
+.topbar__tagline em {
+  display: block;
+  font-style: normal;
+  font-size: 11px;
+  letter-spacing: .14em;
+  color: var(--ink-faint);
+}
+
+
+/* ==========================================================================
+   6. 文案层 —— position:fixed 居中容器，各块互斥淡入淡出
+   ========================================================================== */
+
+.copy-layer {
+  position: fixed;
+  inset: 0;
+  z-index: 6;
+  pointer-events: none;
+}
+
+.copy {
+  position: absolute;
+  /* 46vw → 48vw：让「可用行宽 / 字号」在缩放带与封顶带都恰为 5.333em。
+     注意这**不会**改变文字的实际占宽 —— 最长一行只有 4.67em（约 0.42vw），
+     远窄于容器；容器宽度在这里只作为换行约束起作用。 */
+  width: min(40rem, 48vw);
+  opacity: 0;
+  visibility: hidden;
+  transition: opacity var(--fade) ease, visibility 0s linear var(--fade);
+}
+
+.copy.is-active {
+  opacity: 1;
+  visibility: visible;
+  transition: opacity var(--fade) ease, visibility 0s;
+}
+
+/* ── 落位：按分镜构图避让主体。改位置只改 HTML 上的 data-pos ────────── */
+
+/* 主体在右 → 文案靠左垂直居中（首屏 / 02 个人简历） */
+.copy[data-pos="left"] {
+  left: var(--gut);
+  top: 50%;
+  transform: translateY(-50%);
+}
+
+/* 主体居中占满中下部 → 文案上移（04 作品预览） */
+.copy[data-pos="top"] {
+  left: var(--gut);
+  top: clamp(6rem, 15vh, 11rem);
+}
+
+/* 主体居中、碎片上飞 → 文案压左下（05 无限可能） */
+.copy[data-pos="bottom"] {
+  left: var(--gut);
+  bottom: clamp(6rem, 16vh, 12rem);
+}
+
+/* ── 四个排版槽位 ─────────────────────────────────────────────────── */
+
+.copy__eyebrow {
+  margin: 0 0 clamp(1rem, 2.4vh, 1.9rem);
+  font-size: 12px;
+  font-weight: 400;
+  letter-spacing: .18em;
+  text-transform: uppercase;
+  color: var(--ink-dim);
+  text-shadow: var(--shadow-text);
+}
+
+/* 眉题开头的节序号（02 / 03 …）用暖沙金，
+   与参考视频「02 BIOGRAPHY / 个人简历」的着色一致 —— 序号是定位信息，
+   后面的词是说明，两者需要拉开。首屏那句没有序号，整句就是说明色。 */
+.copy__eyebrow b {
+  font-weight: 600;
+  color: var(--accent);
+}
+
+/* 字号与「最长一行」是绑在一起的，改任一个都要重算。
+
+   约束是 **em 宽度，不是字符数**。空格与字形宽窄差异极大：
+     THE SOFA.   9 字符 = 5.28em   ← 最宽（空格 + T/H/E/O/F/A 都是宽字形）
+     ROLLING.    8 字符 = 4.67em
+     FEELING.    8 字符 = 4.56em
+     RAG         3 字符 = 2.17em
+   可见「字符数」是错的度量：THE SOFA. 比 ROLLING. 少一字符却宽 0.6em。
+
+   容器给多少 em 由两条式子共同决定，取小者：
+     PC 缩放带   48vw / 9vw        = 5.333em
+     PC 封顶带   40rem / 7.5rem    = 5.333em
+     → 桌面端可用行宽恒为 5.333em。要留 ≥10% 余量，最长一行须 ≤ 4.80em。
+
+   当前最长一行是 ROLLING. 的 4.67em（87.5%，余量 12.5%）。
+   showcase_dom_check.js 用一张 Arial 大写宽度表把这条**算出来断言**，
+   改上面任何一个数字都会立刻失败。
+   背景：收尾那句原是 SCROLLING.（10 字符）在 721–800px 与移动端顶破容器、
+   被 break-word 从词中间劈开；而 THE SOFA. 只有 9 字符却更宽 —— 两件事都说明
+   字符数不是该守的量。em 表按最宽的现实回退（Arial / Helvetica）取值，
+   Impact（约 0.45em/字符）与 Roboto Condensed 都明显更窄。 */
+.copy__title {
+  margin: 0;
+  font-family: var(--font-display);
+  font-size: clamp(3.5rem, 9vw, 7.5rem);
+  font-weight: 400;
+  line-height: .88;
+  letter-spacing: -.01em;
+  text-transform: uppercase;
+  color: var(--ink);
+  overflow-wrap: break-word;              /* 兜底：极端字体回退下断词，不撑破视口 */
+  text-shadow: var(--shadow-text);
+}
+
+.copy__desc {
+  margin: clamp(1.2rem, 3vh, 2.2rem) 0 0;
+  max-width: 34ch;
+  font-size: 15px;
+  line-height: 1.9;
+  color: var(--ink-dim);
+  text-shadow: var(--shadow-text);
+}
+
+/* ── CTA：药丸描边 + 圆形箭头 icon（仅首屏） ───────────────────────── */
+
+.cta {
+  display: inline-flex;
+  align-items: center;
+  gap: .8em;
+  margin-top: clamp(1.6rem, 4vh, 2.8rem);
+  padding: .78em 1.5em .78em 1.7em;
+  border: 1px solid rgba(237, 231, 220, .55);
+  border-radius: 999px;
+  color: var(--ink);
+  font-size: 14px;
+  letter-spacing: .06em;
+  text-decoration: none;
+  pointer-events: auto;
+  transition: background-color .25s ease, border-color .25s ease, color .25s ease;
+}
+
+.cta:hover {
+  background: var(--accent);
+  border-color: var(--accent);
+  color: #2E362F;                         /* 暗青灰，非纯黑 */
+}
+
+/* 圆形箭头按钮是**奶白**实心、箭头取暗色，不是暖沙金 ——
+   参考视频里首屏 CTA 的着色就是奶白。暖沙金在这一屏只留给页码与滑轨。 */
+.cta__icon {
+  display: grid;
+  place-items: center;
+  width: 1.6em;
+  height: 1.6em;
+  border-radius: 50%;
+  background: var(--ink);
+  color: #2E362F;
+  font-style: normal;
+  font-size: .9em;
+}
+
+.cta:hover .cta__icon { background: #2E362F; color: var(--ink); }
+
+
+/* ==========================================================================
+   6.5 首屏附加文案层（右栏 / 左下 / 右下）
+
+   只在首屏出现，和左栏主标题同属「初次见遇」这一屏，整体淡入淡出。
+   刻意**不放进** .copy-layer：那一层的每个块是按进度互斥轮换的节文案，
+   这三块不参与轮换，混进去会被当成节文案切走。
+
+   竖向上与左栏主标题错开：左栏是 3 行大标题 + 正文 + CTA，占满中部；
+   右下那块压在 HUD 之上，不能与左下的段落重叠。
+   ========================================================================== */
+
+.hero {
+  position: fixed;
+  inset: 0;
+  z-index: 6;
+  pointer-events: none;
+  opacity: 0;
+  visibility: hidden;
+  transition: opacity var(--fade) ease, visibility 0s linear var(--fade);
+}
+
+.hero.is-active {
+  opacity: 1;
+  visibility: visible;
+  transition: opacity var(--fade) ease, visibility 0s;
+}
+
+.hero > * { position: absolute; }
+
+/* ── 右栏：A CURIOUS MIND. ───────────────────────────────────────────── */
+.hero__aside {
+  right: var(--gut);
+  top: clamp(7rem, 26vh, 15rem);
+  width: clamp(13rem, 19vw, 17rem);
+  text-shadow: var(--shadow-text);
+}
+
+.hero__aside-title {
+  margin: 0 0 clamp(.8rem, 1.8vh, 1.2rem);
+  font-family: var(--font-display);
+  font-size: clamp(1.4rem, 2.2vw, 2rem);
+  font-weight: 400;
+  letter-spacing: .01em;
+  text-transform: uppercase;
+}
+
+/* 三行说明在块内居中 —— 参考里标题的起点比说明行更靠左 */
+.hero__aside-desc {
+  margin: 0;
+  font-size: 13px;
+  line-height: 1.9;
+  text-align: center;
+  color: var(--ink-dim);
+}
+
+/* ── 左下：一段自我介绍 ─────────────────────────────────────────────── */
+.hero__foot {
+  left: var(--gut);
+  bottom: clamp(5.5rem, 12vh, 8.5rem);
+  max-width: min(30rem, 38vw);
+  margin: 0;
+  font-size: 13px;
+  line-height: 1.9;
+  color: var(--ink-dim);
+  text-shadow: var(--shadow-text);
+}
+
+/* ── 右下：视线读数 ─────────────────────────────────────────────────── */
+.hero__gaze {
+  right: var(--gut);
+  bottom: clamp(5.5rem, 12vh, 8.5rem);
+  text-shadow: var(--shadow-text);
+}
+
+.hero__gaze-title {
+  margin: 0 0 .5rem;
+  font-family: var(--font-display);
+  font-size: clamp(1.5rem, 2.6vw, 2.3rem);
+  font-weight: 400;
+  letter-spacing: .01em;
+  text-transform: uppercase;
+}
+
+.hero__gaze-desc {
+  margin: 0 0 clamp(.7rem, 1.6vh, 1.1rem);
+  font-size: 13px;
+  color: var(--ink-dim);
+}
+
+/* 八向读数。等宽字体 + 宽字距，避免 LOOKING DOWN LEFT 这种长标签
+   在方向变化时把整块左右顶动（比例字体会让每行宽窄不一）。 */
+.hero__gaze-read {
+  margin: 0;
+  font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+  font-size: 11px;
+  letter-spacing: .22em;
+  color: var(--accent);
+  min-height: 1.4em;              /* 空值时也占位，防止切换时跳一下 */
+}
+
+/* 没有精确指针就不显示视线读数 —— 它描述的是鼠标位置，触屏上没有意义 */
+@media (hover: none) {
+  .hero__gaze { display: none; }
+}
+
+
+/* ==========================================================================
+   6.7 作品文件夹面板（03 节）
+
+   整屏面板，替换掉「一段左栏文案」的常规节形态：参考视频里这一屏
+   有它自己的构图（居中眉题与标题 + 右上收起药丸 + 三张卡 + 文件夹本体）。
+
+   卡片上是 HTML 真文本。参考图只借排版 —— 文字必须是可选中、可搜索的
+   真文本。卡片**画面**（pony / 人物 / 马）是渲染图，从 beat-2.jpeg 派生，
+   文件夹本体也是。派生脚本与抠图判据见任务文档。
+   ========================================================================== */
+
+.copy--panel {
+  position: fixed;
+  inset: 0;
+  width: auto;                    /* 覆盖 .copy 的 48vw */
+  max-width: none;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  padding: clamp(4.5rem, 11vh, 7rem) var(--gut) clamp(3rem, 7vh, 5rem);
+  /* 面板要能接收点击（点空白处收起）—— .copy-layer 是 pointer-events: none */
+  pointer-events: auto;
+}
+
+.folder__head {
+  position: relative;
+  width: 100%;
+  max-width: 46rem;
+  text-align: center;
+  text-shadow: var(--shadow-text);
+}
+
+.folder__eyebrow {
+  margin: 0 0 clamp(.5rem, 1.2vh, .9rem);
+  font-size: 11px;
+  letter-spacing: .26em;
+  text-transform: uppercase;
+  color: var(--ink-faint);
+}
+
+.folder__title {
+  margin: 0;
+  font-family: var(--font-display);
+  font-size: clamp(1.6rem, 3.4vw, 2.9rem);
+  font-weight: 400;
+  letter-spacing: .01em;
+  text-transform: uppercase;
+}
+
+.folder__close {
+  position: absolute;
+  top: 0;
+  right: 0;
+  appearance: none;
+  display: inline-flex;
+  align-items: center;
+  gap: .6em;
+  padding: .55em 1.1em;
+  border: 0;
+  border-radius: 999px;
+  background: rgba(20, 24, 20, .72);
+  color: var(--ink-dim);
+  font: inherit;
+  font-size: 12px;
+  letter-spacing: .1em;
+  text-shadow: none;
+  cursor: pointer;
+  transition: background-color .25s ease, color .25s ease;
+}
+
+.folder__close:hover { background: var(--ink); color: #2E362F; }
+
+.folder__close-x { font-size: 1.1em; line-height: 1; }
+
+/* ── 卡片与文件夹的堆叠 ─────────────────────────────────────────────── */
+
+.folder__deck {
+  position: relative;
+  flex: 1 1 auto;
+  width: 100%;
+  max-width: 58rem;
+  min-height: clamp(17rem, 46vh, 30rem);
+  margin-top: clamp(1.5rem, 4vh, 3rem);
+}
+
+.fcard {
+  position: absolute;
+  bottom: 30%;
+  width: 27%;
+  padding: .5rem .5rem 1.1rem;
+  border-radius: 1rem;
+  background: #EFE0CC;
+  box-shadow: 0 18px 42px rgba(20, 24, 20, .5);
+  color: #2A2622;
+  text-shadow: none;              /* 卡片自带奶白底，不吃薄纱的投影 */
+}
+
+/* 扇形摆开：中间那张回正并略微抬高，两侧各倾 6° */
+.fcard--rag   { left: 2%;  transform: rotate(-6deg); }
+.fcard--web   { left: 36%; transform: rotate(0deg) translateY(-7%); z-index: 2; }
+.fcard--agent { left: 70%; transform: rotate(6deg); }
+
+.fcard__art {
+  display: block;
+  width: 100%;
+  height: auto;
+  border-radius: .7rem;
+}
+
+.fcard__body { padding: 0 .85rem; }
+
+/* 色签上移压住画面下沿，并再转一点 —— 参考里签比卡片本身斜得更明显 */
+.fcard__chip {
+  display: inline-block;
+  margin: -1.05rem 0 .7rem;
+  padding: .3em .85em;
+  border-radius: .45em;
+  font-size: clamp(12px, 1.15vw, 15px);
+  font-weight: 600;
+  letter-spacing: .02em;
+  color: #FFF8EC;
+  transform: rotate(-2.5deg);
+  box-shadow: 0 4px 10px rgba(20, 24, 20, .3);
+}
+
+.fcard--rag   .fcard__chip { background: #D9853A; }
+.fcard--web   .fcard__chip { background: #7C8F45; transform: rotate(-1.5deg); }
+.fcard--agent .fcard__chip { background: #3E7FA8; transform: rotate(-3deg); }
+
+.fcard__text {
+  margin: 0;
+  font-size: clamp(11px, 1vw, 13px);
+  line-height: 1.75;
+}
+
+/* 文件夹本体压在卡片之上：参考里卡片的下沿是被文件夹前板切掉的 */
+.folder__art {
+  position: absolute;
+  left: 50%;
+  bottom: 0;
+  z-index: 3;
+  width: 74%;
+  height: auto;
+  transform: translateX(-50%);
+  filter: drop-shadow(0 16px 30px rgba(20, 24, 20, .45));
+}
+
+.folder__hint {
+  margin: clamp(1rem, 2.4vh, 1.8rem) 0 0;
+  font-size: 11px;
+  letter-spacing: .16em;
+  color: var(--ink-faint);
+  text-shadow: var(--shadow-text);
+}
+
+.folder__hint-sep { margin: 0 .7em; opacity: .6; }
+
+
+/* ==========================================================================
+   7. HUD：滚动提示 + 序号 / 滑轨 / 时间码 / 互动开关
+   ========================================================================== */
+
+
+.hud {
+  position: fixed;
+  left: 0;
+  right: 0;
+  bottom: 0;
+  z-index: 7;
+  padding: 0 var(--gut) clamp(1rem, 2.6vh, 1.9rem);
+  pointer-events: none;
+}
+
+/* ── 滚动提示：单独一行居中，在 HUD 滑轨之上 ─────────────────────────
+   参考视频里这句和 HUD 不在同一行 —— 它是「这一屏怎么往下走」的指引，
+   HUD 是全局状态，两者层级不同。 */
+.scroll-hint {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: .55em;
+  margin: 0 0 clamp(.6rem, 1.6vh, 1rem);
+  font-size: 11px;
+  letter-spacing: .24em;
+  text-transform: uppercase;
+  color: var(--ink-dim);
+  text-shadow: var(--shadow-text);
+  transition: opacity var(--fade) ease;
+}
+
+/* 已经往下走过就不再提示 */
+.hud.is-scrolled .scroll-hint { opacity: 0; }
+
+.scroll-hint__arrow {
+  display: block;
+  width: .5em;
+  height: .5em;
+  border-right: 1px solid currentColor;
+  border-bottom: 1px solid currentColor;
+  transform: rotate(45deg);
+  animation: nudge 1.9s ease-in-out infinite;
+}
+
+@keyframes nudge {
+  0%, 100% { transform: rotate(45deg) translate(0, 0);         opacity: .45; }
+  50%      { transform: rotate(45deg) translate(.22em, .22em); opacity: 1; }
+}
+
+.hud__row {
+  display: grid;
+  grid-template-columns: auto minmax(6rem, 1fr) auto;
+  align-items: center;
+  gap: clamp(.8rem, 2.2vw, 2rem);
+  font-size: 12px;
+  letter-spacing: .14em;
+  text-transform: uppercase;
+  color: var(--ink-faint);
+  text-shadow: var(--shadow-text);
+}
+
+.hud__cell--left   { justify-self: start; }
+.hud__cell--right  { justify-self: end; }
+.hud__cell--center { justify-self: stretch; color: var(--ink-dim); }
+
+.hud__cell b { font-weight: 500; color: var(--ink-dim); }
+
+/* ── 滑轨：一根细线 + 暖沙金进度 + 圆点旋钮 + 分节刻度 ───────────────
+   刻度由 JS 按 CONFIG.beatCuts 生成，与导航落点、HUD 序号同源，
+   改分节只需改一处，三处不会各自错位。 */
+.hud__track {
+  position: relative;
+  display: block;
+  height: 1px;
+  background: rgba(237, 231, 220, .2);
+}
+
+.hud__fill {
+  position: absolute;
+  top: 0;
+  left: 0;
+  display: block;
+  height: 100%;
+  width: 100%;
+  background: var(--accent);
+  transform: scaleX(0);
+  transform-origin: 0 50%;
+  will-change: transform;
+}
+
+/* 旋钮用 left 定位而不是 transform：transform 已被用来做居中偏移，
+   两者混用会让「进度值」和「视觉位置」两个来源打架。 */
+.hud__knob {
+  position: absolute;
+  top: 50%;
+  left: 0;
+  display: block;
+  width: 7px;
+  height: 7px;
+  margin: -3.5px 0 0 -3.5px;
+  border-radius: 50%;
+  background: var(--ink);
+  box-shadow: 0 0 0 3px rgba(20, 24, 20, .35);
+}
+
+.hud__tick {
+  position: absolute;
+  top: 50%;
+  display: block;
+  width: 1px;
+  height: 5px;
+  margin-top: -2.5px;
+  background: rgba(237, 231, 220, .32);
+}
+
+/* ── 互动开关 ───────────────────────────────────────────────────────── */
+.hud__pause {
+  appearance: none;
+  margin-left: clamp(.6rem, 1.4vw, 1.1rem);
+  padding: .45em 1em;
+  border: 0;
+  border-radius: 999px;
+  background: rgba(20, 24, 20, .62);
+  color: var(--ink-dim);
+  font: inherit;
+  font-size: 11px;
+  letter-spacing: .1em;
+  text-shadow: none;
+  cursor: pointer;
+  pointer-events: auto;           /* .hud 整体是 none，这里要单独开 */
+  transition: background-color .25s ease, color .25s ease;
+}
+
+.hud__pause:hover { background: var(--ink); color: #2E362F; }
+
+.hud__pause.is-paused { background: var(--accent); color: #2E362F; }
+
+/* 触屏没有鼠标悬停，也没有鼠标擦洗，滑轨与互动开关都无意义 */
+@media (hover: none) {
+  .hud__cell--center { display: none; }
+  .hud__pause { display: none; }
+}
+
+
+/* ==========================================================================
+   页面撑高容器 —— 高度由 JS 设为 main 时长 × 100vh
+   ========================================================================== */
+
+.scroll-track {
+  height: 3000vh;                         /* JS 就绪前的兜底，保证一开始可滚动 */
+  width: 100%;
+  pointer-events: none;
+}
+
+
+/* ==========================================================================
+   关于「擦洗模式下要不要改提示」
+   ==========================================================================
+
+   原先这里有一套互换：擦洗开启时把 SCROLL TO EXPLORE 换成 ← MOVE MOUSE →，
+   并藏掉下箭头，理由是「首屏是左右扫视，留着下箭头会误导」。
+
+   参考视频推翻了这个推断：它就是在有精确指针的桌面上录的，
+   首屏仍然写着 SCROLL TO EXPLORE 并带下箭头。
+
+   两件事本来就是并存的，不是二选一：
+     · 滚轮 → 页面进度 p，p × main.duration = main.currentTime（全站推进）
+     · 鼠标横向 → intro.currentTime（只在首屏，只驱动人物转头）
+   「怎么往下走」这一屏问的是前者，所以提示与箭头在任何模式下都成立。
+   .is-scrub 这个 body class 仍然保留 —— ripple.js 用它判断要不要建画布。 */
+
+
+/* ==========================================================================
+   响应式：≤ 720px 双栏堆叠为单列
+   ========================================================================== */
+
+@media (max-width: 720px) {
+  :root { --gut: 7vw; }
+
+  /* 顶部导航隐藏（触屏无鼠标），logo 与署名保留但压扁 */
+  .topbar { grid-template-columns: 1fr; gap: .3rem; }
+  .topbar__nav { display: none; }
+  .topbar__tagline { justify-self: start; text-align: left; }
+
+  /* 首屏的右栏与左下段落隐藏：它们是桌面构图的补充，
+     在单列里会与左栏主标题撞在一起。右下那块已由 (hover: none) 隐掉。 */
+  .hero__aside,
+  .hero__foot { display: none; }
+
+  /* 文案占满横向；纵向落位差异保留，仍是「每段位置不同」。
+     **必须排除 .copy--panel**：它和 .copy 特异性相同，而媒体查询在后，
+     不加 :not() 的话它的 inset: 0 会被这里覆盖掉，整屏面板会塌成一条。 */
+  .copy:not(.copy--panel) {
+    left: var(--gut);
+    right: var(--gut);
+    width: auto;
+  }
+
+  .copy[data-pos="left"] {
+    top: auto;
+    bottom: clamp(7rem, 20vh, 11rem);
+    transform: none;
+  }
+
+  .copy[data-pos="top"]    { top: clamp(5.5rem, 14vh, 8rem); }
+  .copy[data-pos="bottom"] { bottom: clamp(7rem, 20vh, 11rem); }
+
+  .copy__title { font-size: clamp(2.6rem, 14vw, 4.4rem); }
+  .copy__desc  { font-size: 14px; max-width: none; }
+
+  /* ── 作品文件夹：三张横排卡片改为纵向堆叠 ─────────────────────────
+     桌面版每张卡占 27% 宽，在 360px 屏上只剩 ~97px，正文会碎成单字，
+     所以不是等比缩小而是换布局：卡片横过来（画面在左、文字在右），
+     文件夹本体垫在最下面通栏。 */
+  .copy--panel {
+    padding: clamp(4rem, 9vh, 5.5rem) var(--gut) clamp(2rem, 5vh, 3rem);
+    overflow-y: auto;               /* 面板比视口高时要能滚 */
+  }
+
+  /* 面板标题是全页最长的一行（A FOLDER FULL OF IDEAS. ≈ 12.9em），
+     而基础字号的下限 1.6rem 是按桌面定的：在 320px 屏上
+     275px 的可用宽只装得下 10.75em，会横向溢出。
+     这里单独给一组断点内的字号，上限正好落在基础下限 1.6rem 上，
+     所以 493px 以上两者数值相同，跨过 720px 断点不会有跳变。 */
+  .folder__title { font-size: clamp(1.05rem, 5.2vw, 1.6rem); }
+
+  .folder__close {
+    position: static;
+    margin: 1rem auto 0;
+  }
+
+  .folder__deck {
+    display: flex;
+    flex-direction: column;
+    gap: .75rem;
+    min-height: 0;
+    margin-top: 1.2rem;
+  }
+
+  .fcard {
+    position: static;
+    display: grid;
+    grid-template-columns: 34% 1fr;
+    gap: .7rem;
+    align-items: start;
+    width: auto;
+    padding: .5rem;
+    border-radius: .8rem;
+    transform: none;
+  }
+
+  .fcard--web { transform: none; }
+
+  .fcard__art {
+    height: 100%;
+    min-height: 5.5rem;
+    object-fit: cover;
+    border-radius: .5rem;
+  }
+
+  .fcard__body  { padding: 0; }
+  .fcard__chip  { margin: 0 0 .45rem; transform: none; }
+  .fcard__text  { font-size: 11px; line-height: 1.7; }
+
+  .folder__art {
+    position: static;
+    width: 100%;
+    transform: none;
+    filter: drop-shadow(0 12px 22px rgba(20, 24, 20, .45));
+  }
+
+  .folder__hint { letter-spacing: .1em; }
+
+  .hud__row { font-size: 11px; letter-spacing: .1em; }
+  .hud__cell--center { display: none; }
+  .scroll-hint { letter-spacing: .18em; }
+}
+
+
+/* ==========================================================================
+   无障碍：跟随系统降低动效
+   ========================================================================== */
+
+@media (prefers-reduced-motion: reduce) {
+  * {
+    animation-duration: .001ms !important;
+    animation-iteration-count: 1 !important;
+    transition-duration: .001ms !important;
+  }
+
+  .stage__inner { transform: none; }      /* 去掉缩放，避免无谓的抖动感 */
+}

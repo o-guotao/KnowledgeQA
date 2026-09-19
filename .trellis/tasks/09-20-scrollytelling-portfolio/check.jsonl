@@ -1,0 +1,4 @@
+{"file": ".trellis/tasks/09-20-scrollytelling-portfolio/prd.md", "reason": "逐条核对 18 条验收标准，特别是验收 6/7/8/9/10 的滚动-时间映射与验收 16/18 的工程约束"}
+{"file": ".trellis/tasks/09-20-scrollytelling-portfolio/design.md", "reason": "核对实现是否违反关键约束：.stage 不得带 transform、不读回 currentTime 做控制、showcase.js 必须是传统脚本而非 module"}
+{"file": ".trellis/tasks/09-20-scrollytelling-portfolio/implement.md", "reason": "核对 DoD 各项与未决事项是否在交付说明中如实披露"}
+{"file": ".trellis/spec/guides/index.md", "reason": "检查是否遵守 Pre-Modification Rule 与复用心智"}

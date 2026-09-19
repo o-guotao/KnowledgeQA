@@ -1,0 +1,276 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<meta name="theme-color" content="#2E362F">
+<title>Biaoge. — 让设计，有感觉。</title>
+<meta name="description" content="一个设计师的作品集：滚动，就是这条叙事的进度条。">
+
+<!--
+  ＝＝＝＝＝＝＝＝＝＝＝＝＝＝＝＝＝＝＝＝＝＝＝＝＝＝＝＝＝＝＝＝＝＝＝＝＝＝
+  媒体路径全部集中在本文件的 <video src>、<img src> 与 --poster 变量里。
+  把真视频放进 media/ 即可生效，不需要改 showcase.js。
+
+    media/intro-loop.mp4  ← 首屏视频.mp4    （缺失时显示 media/intro.jpeg）
+    media/main.mp4        ← 主视频.mp4      （缺失时露出 media/bg-wall.jpeg 固定背景）
+    media/folder.png      ← 作品文件夹面板的橙色文件夹（透明 PNG，自 beat-2.jpeg 派生）
+    media/card-*.png      ← 三张卡片的画面区（透明 PNG，自 beat-2.jpeg 派生）
+
+  收尾段无视频，只显示 media/beat-3.jpeg。
+  全站背景恒定为 media/bg-wall.jpeg，不随板块切换。
+
+  文案落位由 .copy 的 data-pos 决定（left / top / bottom）——
+  改位置只改这一个属性值，不用碰 CSS。
+  ＝＝＝＝＝＝＝＝＝＝＝＝＝＝＝＝＝＝＝＝＝＝＝＝＝＝＝＝＝＝＝＝＝＝＝＝＝＝
+-->
+
+<link rel="stylesheet" href="showcase.css">
+</head>
+<body>
+
+  <!-- ── 全站唯一固定背景：分镜里那面青灰墙（裁自 beat-1.jpeg） ─────────
+       恒定不变，不随板块或进度切换。main 视频缺失时它就是画面本体。 -->
+  <div class="backdrop" aria-hidden="true"></div>
+
+  <!-- ── 主视频：由滚动驱动 currentTime。永不 autoplay ─────────────────
+       刻意不放 poster —— 缺失时露出 .backdrop，保证背景恒定。 -->
+  <section class="stage stage--main" data-stage="main">
+    <div class="stage__inner">
+      <video class="stage__video" data-role="main"
+             src="media/main.mp4"
+             muted playsinline webkit-playsinline preload="auto"></video>
+    </div>
+  </section>
+
+  <!-- ── 首屏：鼠标横向位置擦洗 currentTime，人物头部随鼠标转 ────────────
+       HTML 保留 autoplay+loop 作无 JS / 触屏的兜底；
+       JS 检测到有精确指针时会 pause() 并摘掉 loop，改由鼠标接管时间轴。 -->
+  <section class="stage stage--intro" data-stage="intro">
+    <div class="stage__inner">
+      <div class="stage__poster" style="--poster:url(media/intro.jpeg)"></div>
+      <video class="stage__video" data-role="intro"
+             src="media/intro-loop.mp4"
+             muted playsinline webkit-playsinline preload="auto" autoplay loop></video>
+    </div>
+  </section>
+
+  <!-- ── 收尾：p >= 0.98 淡入，静态图 ─────────────────────────────────── -->
+  <section class="stage stage--outro" data-stage="outro">
+    <div class="stage__inner">
+      <div class="stage__poster" style="--poster:url(media/beat-3.jpeg)"></div>
+    </div>
+  </section>
+
+  <!-- ── 可读性薄纱：盖在所有影像之上、文字之下 ───────────────────────── -->
+  <div class="scrim" aria-hidden="true"></div>
+
+  <!-- ── 顶部三栏：logo 左 / 5 项导航中 / 署名右 ────────────────────────
+       data-section 是「第几节」，下标 0 起、五个标签与四个节奏点一一对应
+       （节下标 = beat + 1）。落点进度由 showcase.js 的 sectionTarget()
+       从 CONFIG.beatCuts 现算 —— 这里刻意**不写进度值**：写死了，
+       改分节就会静默把某一节指错，且不会报错。
+
+       data-en 是 HUD 序号旁那个英文词（参考视频里作「INTRO 初次见遇」）。
+       放在 data- 上而不是另写一份 span：HUD 的英文和中文必须同源，
+       否则改了导航忘了改 HUD，两处会静默不一致。 -->
+  <header class="topbar">
+    <span class="topbar__logo">Biaoge.</span>
+    <nav class="topbar__nav" aria-label="分节导航">
+      <button type="button" class="topbar__tab" data-section="0" data-en="INTRO">初次见遇</button>
+      <button type="button" class="topbar__tab" data-section="1" data-en="BIOGRAPHY">个人简历</button>
+      <button type="button" class="topbar__tab" data-section="2" data-en="WORK">作品文件夹</button>
+      <button type="button" class="topbar__tab" data-section="3" data-en="PREVIEW">作品预览</button>
+      <button type="button" class="topbar__tab" data-section="4" data-en="BEYOND">无限可能</button>
+    </nav>
+    <span class="topbar__tagline">
+      INDEPENDENT DESIGNER
+      <em>A curious mind. A world of ideas.</em>
+    </span>
+  </header>
+
+  <!-- ── 首屏的四块附加文案 ──────────────────────────────────────────────
+       归在一个 .hero 里整体显隐：它们和左栏主标题同属首屏，
+       离开首屏要一起淡出，不能各自为政。
+
+       右栏 / 左下 / 右下三块都**不进** .copy-layer —— 那一层的每个块
+       是「按进度互斥切换」的节文案，而这三块只在首屏出现、不参与轮换。
+       混进去会让 progress 一到 main 段就把它们当过节文案切掉。 -->
+  <div class="hero" data-hero>
+
+    <aside class="hero__aside">
+      <h2 class="hero__aside-title">A CURIOUS MIND.</h2>
+      <p class="hero__aside-desc">
+        观察生活，也观察自己。<br>
+        每一种感受，都可能成为<br>
+        下一件作品的起点。
+      </p>
+    </aside>
+
+    <p class="hero__foot">
+      我是一个喜欢观察、热爱折腾的设计师。用视觉讲故事，<br>
+      用动态表达情绪，也给不确定的灵感，留一点位置。
+    </p>
+
+    <aside class="hero__gaze">
+      <h2 class="hero__gaze-title">HELLO, YOU.</h2>
+      <p class="hero__gaze-desc">移动鼠标，我会看向你的位置。</p>
+      <!-- 读数由 JS 按鼠标所在方位实时改写（八向 + 正中）。
+           aria-live="off"：这是跟着鼠标每帧变的装饰性读数，
+           交给读屏播报会变成噪音。 -->
+      <p class="hero__gaze-read" data-gaze aria-live="off">LOOKING AT YOU</p>
+    </aside>
+
+  </div>
+
+  <!-- ── 文案层：position:fixed，各块互斥淡入淡出 ────────────────────────
+       data-copy 与「第几节」一一对应：
+         intro       首屏
+         0           02 个人简历
+         1           03 作品文件夹（整屏面板，见 .folder）
+         2           04 作品预览
+         3           05 无限可能（收尾段沿用这一块）
+       data-pos 按分镜构图避让主体。 -->
+  <div class="copy-layer">
+
+    <article class="copy" data-copy="intro" data-pos="left">
+      <p class="copy__eyebrow">BIAOGE / DESIGN &amp; A LITTLE CURIOUSITY</p>
+      <h1 class="copy__title">DESIGN<br>WITH<br>FEELING.</h1>
+      <p class="copy__desc">嗨，我是表哥。<br>把藏不住的好奇，做成一眼就记住的设计。</p>
+      <!-- data-section="2" = 作品文件夹那一节，与顶部导航第三个标签同一落点 -->
+      <a class="cta" href="#work" data-section="2">
+        <span>先认识我，再看作品</span>
+        <i class="cta__icon" aria-hidden="true">&#8599;</i>
+      </a>
+    </article>
+
+    <!-- 02 个人简历。目前只有参考视频左栏那一段（眉题 + 三行标题），
+         中间那块「2017 时间轴 + 资质列表」尚未做 —— 它是独立的一块交付，
+         不跟首屏 / 文件夹混在一起做。导航先指过来，避免出现死链。 -->
+    <article class="copy" data-copy="0" data-pos="left">
+      <p class="copy__eyebrow"><b>02</b> BIOGRAPHY / 个人简历</p>
+      <h2 class="copy__title">DESIGN.<br>TEACH.<br>BUILD.</h2>
+      <p class="copy__desc">表哥懂设计。</p>
+    </article>
+
+    <!-- 03 作品文件夹：整屏面板。
+         卡片上是 HTML 真文本，不是渲染图 —— 参考图只借排版，
+         文字必须是可选中、可搜索的真文本，这一点在首屏就定了。 -->
+    <section class="copy copy--panel folder" data-copy="1" aria-label="作品文件夹">
+
+      <header class="folder__head">
+        <p class="folder__eyebrow">BIAOGE / SELECTED WORK</p>
+        <h2 class="folder__title">A FOLDER FULL OF IDEAS.</h2>
+        <button type="button" class="folder__close" data-close-panel>
+          收起文件夹 <span class="folder__close-x" aria-hidden="true">&#10005;</span>
+        </button>
+      </header>
+
+      <div class="folder__deck">
+        <article class="fcard fcard--rag">
+          <img class="fcard__art" src="media/card-rag.png" alt="" width="640" height="522">
+          <div class="fcard__body">
+            <p class="fcard__chip">RAG知识库</p>
+            <p class="fcard__text">
+              搜索：你提问时，系统先从知识库里找出最相关的资料片段。<br>
+              生成：大模型结合这些资料片段来回答，而不是只靠它自己“记住”的东西。
+            </p>
+          </div>
+        </article>
+
+        <article class="fcard fcard--web">
+          <img class="fcard__art" src="media/card-web.png" alt="" width="667" height="582">
+          <div class="fcard__body">
+            <p class="fcard__chip">网站设计</p>
+            <p class="fcard__text">
+              专注品牌与体验的网站设计，兼顾视觉美感、交互流畅与移动端适配。
+            </p>
+          </div>
+        </article>
+
+        <article class="fcard fcard--agent">
+          <img class="fcard__art" src="media/card-agent.png" alt="" width="677" height="542">
+          <div class="fcard__body">
+            <p class="fcard__chip">Agent设计</p>
+            <p class="fcard__text">
+              把大模型从“聊天工具”变成“能自己干活的执行者”。
+            </p>
+          </div>
+        </article>
+
+        <!-- 文件夹本体压在卡片之前：参考里卡片的下沿是被文件夹前板切掉的，
+             不是叠在上面。z-index 见 CSS。 -->
+        <img class="folder__art" src="media/folder.png" alt="" width="1800" height="518">
+      </div>
+
+      <!-- 这行在录屏源里只有约 8px 高，全靠猜；后来在 media/作品示例排版.png
+           （这张面板的设计稿）里读到原文，两处独立来源一致：
+           「三指 · 开合 · 翻页 / 点击空白栏或按 ESC 收起」。
+           是「空白栏」不是「空白处」—— 可点的正是面板中间那条空白带。 -->
+      <p class="folder__hint">
+        三指 · 开合 · 翻页
+        <span class="folder__hint-sep" aria-hidden="true">/</span>
+        点击空白栏或按 ESC 收起
+      </p>
+    </section>
+
+    <article class="copy" data-copy="2" data-pos="top">
+      <p class="copy__eyebrow"><b>04</b> PREVIEW / 作品预览</p>
+      <h2 class="copy__title">RAG<br>WEB<br>AGENT.</h2>
+      <p class="copy__desc">RAG、网站、Agent，三张卡片，三次把想法落地。</p>
+    </article>
+
+    <article class="copy" data-copy="3" data-pos="bottom">
+      <p class="copy__eyebrow"><b>05</b> BEYOND / 无限可能</p>
+      <h2 class="copy__title">STILL<br>ROLLING.</h2>
+      <p class="copy__desc">工具会一直变，好奇心不会——所以我还在往前滚。</p>
+    </article>
+
+  </div>
+
+  <!-- ── 底部：滚动提示 + HUD（序号 / 滑轨 / 时间码 / 互动开关） ───────── -->
+  <div class="hud">
+
+    <!-- 提示在滑轨上方单独一行，与参考视频的层次一致（原先挤在 HUD 行里）。
+         不做「擦洗模式换文案」的分支 —— 滚轮推进度、鼠标横向驱动首屏转头，
+         两者并存，所以这句话在任何模式下都成立。 -->
+    <p class="scroll-hint">
+      <span>SCROLL TO EXPLORE</span>
+      <i class="scroll-hint__arrow" aria-hidden="true"></i>
+    </p>
+
+    <div class="hud__row">
+      <span class="hud__cell hud__cell--left">
+        <b data-hud-num>01</b> / <span data-hud-label>INTRO 初次见遇</span>
+      </span>
+
+      <!-- 滑轨：刻度由 JS 按 CONFIG.sections 生成，改分节只需改一处 -->
+      <span class="hud__cell hud__cell--center">
+        <span class="hud__track" data-hud-track>
+          <i class="hud__fill" data-hud-fill></i>
+          <i class="hud__knob" data-hud-knob></i>
+        </span>
+      </span>
+
+      <span class="hud__cell hud__cell--right">
+        <b data-hud-time>00:00</b> / <span data-hud-total>00:10</span>
+        <!-- 两个标签都放 HTML：data-paused-label 是按下之后要换上的那个，
+             现成文字是未按下时的那个。写在 JS 里就得翻两个文件改文案。 -->
+        <button type="button" class="hud__pause" data-toggle-interaction
+                data-paused-label="继续互动">暂停互动</button>
+      </span>
+    </div>
+  </div>
+
+  <!-- 撑开页面总高度：由 JS 设为 main 时长 × 100vh -->
+  <div class="scroll-track" data-scroll-track aria-hidden="true"></div>
+
+  <script src="showcase.js"></script>
+
+  <!-- ── 鼠标波纹层（v4）：光标附近的细亮环，点击向外扩散 ────────────────
+       画布由 ripple.js 自己创建并插到 body 末尾 ——
+       prefers-reduced-motion 与触屏下**根本不创建**，不是创建了再隐藏。
+       放在 showcase.js 之后：两者互不依赖，各跑各的 rAF。 -->
+  <script src="ripple.js"></script>
+</body>
+</html>

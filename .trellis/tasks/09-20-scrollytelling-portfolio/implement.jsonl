@@ -1,0 +1,6 @@
+{"file": ".trellis/tasks/09-20-scrollytelling-portfolio/prd.md", "reason": "需求与 18 条验收标准；叙事拆解、排版语言、三段式切换逻辑的唯一来源"}
+{"file": ".trellis/tasks/09-20-scrollytelling-portfolio/design.md", "reason": "技术设计：目录布局、DOM 结构、状态机、阻尼 seek 算法、iOS 三个坑、设计令牌"}
+{"file": ".trellis/tasks/09-20-scrollytelling-portfolio/implement.md", "reason": "执行清单、验证命令、回滚点、DoD"}
+{"file": ".trellis/spec/guides/index.md", "reason": "Pre-Modification Rule（改任何值前先搜索）等流程铁律"}
+{"file": ".trellis/spec/guides/code-reuse-thinking-guide.md", "reason": "复用优先：不要复制粘贴，提取共享实现"}
+{"file": ".trellis/spec/frontend/index.md", "reason": "前端 spec 入口与文档语言约定（注意：其下多为待填占位，对本任务几乎无约束）"}
