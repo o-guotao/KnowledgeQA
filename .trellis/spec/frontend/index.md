@@ -17,7 +17,7 @@ This directory contains guidelines for frontend development. Fill in each file w
 | [Directory Structure](./directory-structure.md) | Module organization and file layout | To fill |
 | [Component Guidelines](./component-guidelines.md) | Component patterns, props, composition | To fill |
 | [Hook Guidelines](./hook-guidelines.md) | Custom hooks, data fetching patterns | To fill |
-| [Standalone Static Pages](./static-pages.md) | `frontend/public/` pages outside the build: classic scripts, offline assertions, fixed-position containing block, video scrubbing | Active |
+| [Standalone Static Pages](./static-pages.md) | `frontend/public/` pages outside the build: classic scripts, offline assertions, fixed-position containing block (both directions), `pointer-events` inheritance, progress-driven one-shot effects, assertion style + teeth | Active |
 | [File Preview & Byte Fetch](./file-preview.md) | pdf.js modal lifecycle, authenticated byte fetch, client-mirror validation | Active |
 | [List Pagination & Search](./list-pagination.md) | usePaginatedQuery, pageSchema/withQuery, SearchInput/Pagination, chat history paging | Active |
 | [State Management](./state-management.md) | Local/global/server state; optimistic-stream vs history-reload race | Active |

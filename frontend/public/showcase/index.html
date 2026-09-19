@@ -13,12 +13,17 @@
   把真视频放进 media/ 即可生效，不需要改 showcase.js。
 
     media/intro-loop.mp4  ← 首屏视频.mp4    （缺失时显示 media/intro.jpeg）
-    media/main.mp4        ← 主视频.mp4      （缺失时露出 media/bg-wall.jpeg 固定背景）
-    media/folder.png      ← 作品文件夹面板的橙色文件夹（透明 PNG，自 beat-2.jpeg 派生）
-    media/card-*.png      ← 三张卡片的画面区（透明 PNG，自 beat-2.jpeg 派生）
+    media/main.mp4        ← 主视频.mp4      （缺失时露出背景层）
+    media/bg-wall.jpeg    ← 背景层的恒定底图（裁自 beat-1.jpeg 的净墙面）
+    media/intro.jpeg      ← 个人简历那一节的背景
+    media/beat-1.jpeg     ← 作品文件夹那一节的背景
+    media/folder.png      ← 作品文件夹的**封面**：合着的橙色文件夹（透明 PNG）
+    media/beat-2.jpeg     ← 作品文件夹翻开后的**内页**（整图）
+    media/beat-3.jpeg     ← 无限可能那一节的背景（滚动驱动下坠入画）
 
   收尾段无视频，只显示 media/beat-3.jpeg。
-  全站背景恒定为 media/bg-wall.jpeg，不随板块切换。
+  背景分两层：.backdrop 的底图恒定不变，其上的 .backdrop__scene 按节切换
+  （个人简历 / 作品文件夹 / 无限可能各一张，其余两节落回底图）。
 
   文案落位由 .copy 的 data-pos 决定（left / top / bottom）——
   改位置只改这一个属性值，不用碰 CSS。
@@ -29,9 +34,20 @@
 </head>
 <body>
 
-  <!-- ── 全站唯一固定背景：分镜里那面青灰墙（裁自 beat-1.jpeg） ─────────
-       恒定不变，不随板块或进度切换。main 视频缺失时它就是画面本体。 -->
-  <div class="backdrop" aria-hidden="true"></div>
+  <!-- ── 背景层：恒定底图 + 按节切换的几张分镜图（v6） ──────────────────
+       底图（分镜里那面青灰墙，裁自 beat-1.jpeg）恒定不变，main 视频缺失时
+       它就是画面本体。其上的每一层按 data-scene 与**同名的** data-copy 绑定 ——
+       键是同源的一把，所以「哪一节用哪张图」只在本文件里出现一次。
+       data-scene 只有三节：初次见遇与作品预览刻意不给层，直接落回底图。
+
+       data-drop 的那一层（无限可能）位移由 JS 按滚动进度写入，见 showcase.js。
+       所有层都在 .backdrop 内部，所以整块仍占 z-index 0，整条 z 序不动。 -->
+  <div class="backdrop" aria-hidden="true">
+    <div class="backdrop__scene" data-scene="0" style="--scene:url(media/intro.jpeg)"></div>
+    <div class="backdrop__scene" data-scene="1" style="--scene:url(media/beat-1.jpeg)"></div>
+    <div class="backdrop__scene" data-scene="3" data-drop
+         style="--scene:url(media/beat-3.jpeg)"></div>
+  </div>
 
   <!-- ── 主视频：由滚动驱动 currentTime。永不 autoplay ─────────────────
        刻意不放 poster —— 缺失时露出 .backdrop，保证背景恒定。 -->
@@ -99,7 +115,12 @@
   <div class="hero" data-hero>
 
     <aside class="hero__aside">
-      <h2 class="hero__aside-title">A CURIOUS MIND.</h2>
+      <!-- 折行写在标签里而不是交给自动换行：这一行占 8.667em，而这一栏
+           最多只有 8.5em 可用（17rem / 2rem）。装了 Impact 的系统一行放得下，
+           回退到 Arial 的系统放不下 —— 换行与否取决于用户装了什么字体，
+           两行看着就不是同一版设计了。写死 <br> 之后两处一致，
+           最长一行只剩 A CURIOUS 的 5.556em（65%），余量充足。 -->
+      <h2 class="hero__aside-title">A CURIOUS<br>MIND.</h2>
       <p class="hero__aside-desc">
         观察生活，也观察自己。<br>
         每一种感受，都可能成为<br>
@@ -166,42 +187,39 @@
         </button>
       </header>
 
-      <div class="folder__deck">
-        <article class="fcard fcard--rag">
-          <img class="fcard__art" src="media/card-rag.png" alt="" width="640" height="522">
-          <div class="fcard__body">
-            <p class="fcard__chip">RAG知识库</p>
-            <p class="fcard__text">
-              搜索：你提问时，系统先从知识库里找出最相关的资料片段。<br>
-              生成：大模型结合这些资料片段来回答，而不是只靠它自己“记住”的东西。
-            </p>
-          </div>
-        </article>
+      <!-- 内容区（v6）：封面「合着的文件夹」→ 点开换成内页整图。
+           两块都是按钮，不是把点击挂在面板上 ——
+             1) 翻开之后必须还有一个键盘可达的「合上」入口，
+                否则键盘用户翻开就出不来了；
+             2) 点击区域越窄越安全。原先整屏面板都是可点区（pointer-events:
+                auto + inset:0），结果顶栏五个导航看着可见却点不到 ——
+                点任意一个都被面板吃掉，人被送到「作品预览」。 -->
+      <div class="folder__deck" data-folder-deck>
 
-        <article class="fcard fcard--web">
-          <img class="fcard__art" src="media/card-web.png" alt="" width="667" height="582">
-          <div class="fcard__body">
-            <p class="fcard__chip">网站设计</p>
-            <p class="fcard__text">
-              专注品牌与体验的网站设计，兼顾视觉美感、交互流畅与移动端适配。
-            </p>
-          </div>
-        </article>
+        <button type="button" class="folder__cover" data-folder-toggle
+                aria-expanded="false" aria-label="翻开作品文件夹">
+          <img class="folder__cover-art" src="media/folder.png" alt="" width="1800" height="518">
+        </button>
 
-        <article class="fcard fcard--agent">
-          <img class="fcard__art" src="media/card-agent.png" alt="" width="677" height="542">
-          <div class="fcard__body">
-            <p class="fcard__chip">Agent设计</p>
-            <p class="fcard__text">
-              把大模型从“聊天工具”变成“能自己干活的执行者”。
-            </p>
-          </div>
-        </article>
+        <button type="button" class="folder__page" data-folder-toggle
+                aria-expanded="false" aria-label="合上作品文件夹">
+          <img class="folder__page-art" src="media/beat-2.jpeg"
+               alt="作品文件夹内页：RAG知识库、网站设计、Agent设计三张卡片与文件夹本体"
+               width="2800" height="1568">
+        </button>
 
-        <!-- 文件夹本体压在卡片之前：参考里卡片的下沿是被文件夹前板切掉的，
-             不是叠在上面。z-index 见 CSS。 -->
-        <img class="folder__art" src="media/folder.png" alt="" width="1800" height="518">
       </div>
+
+      <!-- 内页是一张位图，卡片正文因此不再可选中。原文挪到这里：
+           读屏念得到、Ctrl+F 搜得到，不随「换成整图」一起丢掉。
+           刻意放在 .folder__deck **之外** —— 在里会被 deck 的
+           pointer-events: auto 带上，凭空多出一个可点区。 -->
+      <p class="sr-only">
+        RAG知识库：搜索——你提问时，系统先从知识库里找出最相关的资料片段；
+        生成——大模型结合这些资料片段来回答，而不是只靠它自己「记住」的东西。
+        网站设计：专注品牌与体验的网站设计，兼顾视觉美感、交互流畅与移动端适配。
+        Agent设计：把大模型从「聊天工具」变成「能自己干活的执行者」。
+      </p>
 
       <!-- 这行在录屏源里只有约 8px 高，全靠猜；后来在 media/作品示例排版.png
            （这张面板的设计稿）里读到原文，两处独立来源一致：
@@ -244,7 +262,7 @@
         <b data-hud-num>01</b> / <span data-hud-label>INTRO 初次见遇</span>
       </span>
 
-      <!-- 滑轨：刻度由 JS 按 CONFIG.sections 生成，改分节只需改一处 -->
+      <!-- 滑轨：刻度由 JS 按 CONFIG.beatCuts 经 sectionTicks() 生成，改分节只需改一处 -->
       <span class="hud__cell hud__cell--center">
         <span class="hud__track" data-hud-track>
           <i class="hud__fill" data-hud-fill></i>

@@ -62,6 +62,13 @@ var CONFIG = {
 
     tiltY:           8,        /* 纵向微位移幅度(px)，纯触感反馈 */
     fallbackDuration: 5        /* intro 元数据到位前的兜底时长(秒) */
+  },
+
+  /* 逐节背景的下坠揭示（v6）。只作用于 HTML 上带 data-drop 的那一层
+     （无限可能）。落在该节前 dropSpan 的比例区间内完成，之后恒为 0。 */
+  sceneDrop: {
+    dropSpan: 0.35,  /* 下落占该节长度的比例，其余时间静止在落点 */
+    from:     -1     /* 起始位移，单位是层高的倍数。-1 = 整体在视口上方 */
   }
 };
 
@@ -135,6 +142,29 @@ function sectionTarget(i) {
   var s = spans[i - 1];
   if (!s) return 1;
   return s[0] + (s[1] - s[0]) * 0.25;
+}
+
+/**
+ * 「无限可能」背景层的下坠位移（占层高的倍数，负值 = 在视口上方）。
+ *
+ * 位移由滚动进度**现算**，所以能倒放、能停在任意中间态、静止时零写入 ——
+ * 与主视频的 seek、首屏的回正是同一套纪律，不是另起一套时间动画。
+ *
+ * 曲线取 easeInCubic 而不是缓入缓出：下坠是越落越快、落地即停；
+ * 缓入缓出会读成「浮」进来，而分镜里那个人是坠下来的。
+ * k 在 u >= 1 后恒为 1，所以落点精确是 0、不是「趋近于 0」——
+ * 这与波纹停机判据要吸附到精确 0 是同一类要求：趋近不值会永远差一点。
+ *
+ * @param p    滚动进度 0..1
+ * @param span 该节的进度区间 [起, 止]；缺省时返回 0（不位移）
+ */
+function sceneDropY(p, span) {
+  if (!span) return 0;
+  var w = (span[1] - span[0]) * CONFIG.sceneDrop.dropSpan;
+  if (!(w > 0)) return 0;
+  var u = clamp((p - span[0]) / w, 0, 1);
+  var k = u * u * u;
+  return CONFIG.sceneDrop.from * (1 - k);
 }
 
 /**
@@ -229,6 +259,19 @@ function init() {
   var pauseBtn = document.querySelector('[data-toggle-interaction]');
   var folderEl = document.querySelector('.folder');
 
+  /* ── 逐节背景（v6）：键与文案同一把 ───────────────────────────────────
+     data-scene 与 data-copy 是同一个取值域（'intro' / '0' / '1' / '2' / '3'），
+     所以「哪一节用哪张图」只写在 HTML 上，JS 不认识任何图片名。
+     没有对应层的那两节（初次见遇 / 作品预览）自然露出 .backdrop 的底图，
+     不需要分支，也不需要占位层。 */
+  var sceneEls = {};
+  Array.prototype.forEach.call(document.querySelectorAll('[data-scene]'), function (el) {
+    sceneEls[el.dataset.scene] = el;
+  });
+  var dropEl = document.querySelector('[data-scene][data-drop]');
+  /* 下坠发生的区间 = 最后一节（无限可能）。取一次就够：beatCuts 运行时不改。 */
+  var dropSpan = sectionSpans()[CONFIG.beatCuts.length];
+
   var stages = {
     intro: document.querySelector('[data-stage="intro"]'),
     main:  document.querySelector('[data-stage="main"]'),
@@ -274,6 +317,7 @@ function init() {
   var lastSeg = null, lastCopyKey = null;
   var lastFill = null, lastTime = null, lastScrolled = null;
   var lastPyW = null, lastKnob = null, lastTot = null, lastGaze = null;
+  var lastDrop = null;
 
   /* ── 工具：只在值真的变了才写 DOM ─────────────────────────────────── */
   function setText(el, s) {
@@ -384,6 +428,18 @@ function init() {
         }
       }
 
+      /* 背景与文案用**同一把键、同一刻**切换。分开算就会出现
+         「文案已经换了、背景还停在上一节」那一帧。 */
+      for (var s in sceneEls) {
+        if (Object.prototype.hasOwnProperty.call(sceneEls, s)) {
+          setClass(sceneEls[s], 'is-active', s === copyKey);
+        }
+      }
+
+      /* 离开作品文件夹时合上内页。不重置的话下次回来直接是内页，
+         「封面 → 内页」这个动作就只有第一次成立。 */
+      setFolderOpen(false);
+
       var segIndex = (beat < 0) ? 0 : beat + 1;
       var tab = navTabs[segIndex];
       for (var j = 0; j < navTabs.length; j++) setClass(navTabs[j], 'is-active', j === segIndex);
@@ -477,6 +533,19 @@ function init() {
 
     var scrolled = progress > CONFIG.introAt;
     if (scrolled !== lastScrolled) { lastScrolled = scrolled; setClass(hud, 'is-scrolled', scrolled); }
+
+    /* 7) 逐节背景的下坠（v6，只作用于带 data-drop 的那一层）。
+          每帧从 p 现算而不是播一次定时动画：倒着滚会原样升回去，
+          停在中间就停在中间。静止时位移不变、零写入 ——
+          备忘键取「真正写进去的那个字符串」，不取中间量，
+          否则会出现「判等通过但写进去的值其实变了」这种偏差。 */
+    if (dropEl) {
+      var pct = (sceneDropY(progress, dropSpan) * 100).toFixed(3);
+      if (pct !== lastDrop) {
+        lastDrop = pct;
+        dropEl.style.transform = 'translate3d(0,' + pct + '%,0)';
+      }
+    }
   }
 
   function loop() {
@@ -601,11 +670,39 @@ function init() {
     pauseBtn.addEventListener('click', function () { setPaused(!interactionPaused); });
   }
 
-  /* ── 作品文件夹面板的收起 ──────────────────────────────────────────
-     三条入口（收起按钮 / ESC / 点空白处）都汇到 closePanel。
+  /* ── 作品文件夹面板：开合 + 收起 ───────────────────────────────────
+     两类动作，刻意分开：
+       开合  ← 点内容区里的封面 / 内页（两个按钮，键盘可达）
+       收起  ← 收起按钮 / ESC / 点内容区的空白栏
+     提示原文「三指 · 开合 · 翻页 / 点击空白栏或按 ESC 收起」就是这个分工：
+     开合是这个面板的主手势，收起整块面板才是「空白栏 / ESC」。
+
      面板是 data-copy="1"，即节下标 2（节下标 = beat + 1），收起后去下一节。 */
   var folderSection = (folderEl && !isNaN(parseInt(folderEl.dataset.copy, 10)))
                     ? parseInt(folderEl.dataset.copy, 10) + 2 : -1;
+
+  /* 开合的两块按钮。翻开之后必须还有一个键盘可达的「合上」入口 ——
+     只有一个按钮的话，键盘用户翻开就出不来了（被隐藏的按钮不接收焦点）。 */
+  var folderToggles = folderEl
+    ? Array.prototype.slice.call(folderEl.querySelectorAll('[data-folder-toggle]'))
+    : [];
+  var folderDeck = folderEl ? folderEl.querySelector('[data-folder-deck]') : null;
+
+  function setFolderOpen(on) {
+    if (!folderEl || !folderToggles.length) return;
+    if (folderEl.classList.contains('is-open') === on) return;
+    var from = document.activeElement;
+    setClass(folderEl, 'is-open', on);
+    folderToggles.forEach(function (b) {
+      b.setAttribute('aria-expanded', on ? 'true' : 'false');
+    });
+    /* 合上时把焦点交回封面：被隐藏的按钮不能继续持有焦点，
+       否则键盘用户下一次 Tab 会从文档开头重来。 */
+    if (!on && from && folderToggles.indexOf(from) >= 0) {
+      var cover = folderEl.querySelector('.folder__cover');
+      if (cover) cover.focus();
+    }
+  }
 
   function closePanel() {
     /* 只在面板真的在屏上时才动滚动 —— ESC 是全站按键，
@@ -626,13 +723,26 @@ function init() {
       if (e.key === 'Escape' || e.key === 'Esc') closePanel();
     });
 
-    /* 点空白处。卡片与收起按钮是「东西」，点它们不算点空白 ——
-       用户点卡片多半是想选中文案。 */
-    folderEl.addEventListener('click', function (e) {
-      var t = e.target;
-      if (t && t.closest && t.closest('.fcard, [data-close-panel]')) return;
-      closePanel();
+    /* 开合：两个按钮共用一个切换 —— 同一时刻只有一个可见、可聚焦，
+       所以「不是打开状态就打开、是打开状态就合上」对两者都成立。 */
+    folderToggles.forEach(function (b) {
+      b.addEventListener('click', function (e) {
+        if (e && e.preventDefault) e.preventDefault();
+        setFolderOpen(!folderEl.classList.contains('is-open'));
+      });
     });
+
+    /* 点空白栏收起。可点区**只挂在这一块上**，不再挂在整屏面板上：
+       面板 inset:0 会盖住顶栏（z-index 5 < 文案层 6），原先挂整屏时
+       五个导航看得见却点不到 —— 点任意一个都被面板吃掉，
+       人被送到「作品预览」。内容区里的两块按钮是「东西」，不算空白。 */
+    if (folderDeck) {
+      folderDeck.addEventListener('click', function (e) {
+        var t = e.target;
+        if (t && t.closest && t.closest('[data-folder-toggle]')) return;
+        closePanel();
+      });
+    }
   }
 
   /* ── 视频就绪 / 失败 ─────────────────────────────────────────────── */
@@ -745,7 +855,8 @@ function init() {
               beatIndexAt: beatIndexAt, formatTime: formatTime,
               mouseToIntroTime: mouseToIntroTime, shouldWriteIntro: shouldWriteIntro,
               sectionTicks: sectionTicks, sectionSpans: sectionSpans,
-              sectionTarget: sectionTarget, gazeLabel: gazeLabel };
+              sectionTarget: sectionTarget, gazeLabel: gazeLabel,
+              sceneDropY: sceneDropY };
 
   if (typeof document !== 'undefined') { init(); return; }   /* 浏览器 */
   if (typeof module !== 'undefined' && module.exports) module.exports = API;

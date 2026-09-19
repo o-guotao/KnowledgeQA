@@ -2,7 +2,7 @@
 
 > Pages that are not part of the React app: plain HTML/CSS/JS, no imports, no build step,
 > openable by double-clicking the file. Source of truth: `frontend/public/showcase/`
-> (`index.html`, `showcase.css`, `showcase.js`).
+> (`index.html`, `showcase.css`, `showcase.js`, `ripple.js`).
 
 ## What "outside the build" actually means
 
@@ -139,6 +139,157 @@ Because this fails silently and only at certain scroll/motion states, assert it:
 const stage = cssCode.match(/\n\.stage\s*\{[^}]*\}/);
 check(!/transform|filter|will-change/.test(stage[0]), '.stage has no transform');
 ```
+
+### The same trap in reverse: a child that must stay *inside* a fixed parent
+
+The rule above is about what `fixed` descendants do under a transformed ancestor. Its
+mirror image bites when you add a layer to an existing fixed stack: `position: absolute`
+inside a `position: fixed` parent uses **that parent** as the containing block, so the
+child inherits its box and its stacking context. Write `fixed` instead and the child
+escapes to the viewport — and silently leaves the parent's `z-index`, landing somewhere
+else in the layer order.
+
+```css
+/* Wrong: escapes .backdrop, so the layer is no longer at z-index 0 */
+.backdrop__scene { position: fixed; inset: 0; }
+
+/* Correct: stays in .backdrop's box and stacking context */
+.backdrop__scene { position: absolute; inset: 0; }
+```
+
+`absolute` and `fixed` look interchangeable here — both with `inset: 0` cover the same
+pixels when nothing scrolls. Assert the property name, not the rendered geometry.
+
+**`z-index` does not accept fractions.** To put a new layer *under* an existing one but
+*above* the background, you cannot write `z-index: 0.5` — the value is parsed as an
+integer, so `0.5` and `0` are the same and one of the two layers wins arbitrarily. Nest
+the new layer inside the lower one instead, which needs no z-index change at all and
+keeps a "strictly increasing z-chain" assertion passing untouched.
+
+## `pointer-events` is inherited — a top layer can swallow clicks for a lower one
+
+`pointer-events` is an inherited property, and an element with `inset: 0` at a higher
+`z-index` than a sibling does not have to be *opaque* to block it — it only has to be
+hit-testable. The failure is nasty because the blocked element is still **visible**:
+
+```css
+.copy--panel  { position: absolute; inset: 0; z-index: 6; pointer-events: auto; }
+.topbar       { position: fixed;  inset: 0 0 auto; z-index: 5; }
+/* The topbar renders, but its nav is unclickable: the panel takes every hit. */
+```
+
+Set the container to `none` and open `auto` only where a real interaction exists:
+
+```css
+.copy--panel  { pointer-events: none; }
+.folder__deck { pointer-events: auto; }   /* the only hit region */
+.folder__close{ pointer-events: auto; }
+```
+
+Two follow-on rules:
+
+- **A visually-hidden text block must live *outside* any `pointer-events: auto`
+  container.** `.sr-only` (1px + `clip-path: inset(50%)`) is invisible but still
+  hit-testable, so inside an `auto` parent it becomes an invisible click target that
+  swallows real clicks.
+- **Derive the click-outside handler from the same container.** A handler on the panel
+  that closes on "anything but `.foo`" also fires for clicks on the panel's own content,
+  which then contradicts the on-screen hint (e.g. "click the blank area to close"). Put
+  the listener on the narrow surface and early-return via
+  `closest('[data-toggle]')`.
+
+## Scroll-driven one-shot effects: drive by progress, land on an exact value
+
+An effect that should run once as a section comes into view — an image dropping in, a
+reveal, a fill — should be a **pure function of scroll progress**, not a CSS
+`animation` fired from an observer. Progress-driven is reversible for free (scrolling
+back plays it in reverse), writes nothing while the value is unchanged, and is testable
+without a browser.
+
+```js
+function sceneDropY(p, span) {
+  if (!span) return 0;
+  const w = (span[1] - span[0]) * CONFIG.sceneDrop.dropSpan;
+  if (!(w > 0)) return 0;                        // degenerate span: start === end
+  const u = clamp((p - span[0]) / w, 0, 1);      // must clamp: p is < 0 before the span
+  const k = u * u * u;                           // easeInCubic
+  return CONFIG.sceneDrop.from * (1 - k);        // exactly 0 at u === 1
+}
+```
+
+Three things that are easy to get wrong, in order of how much time they cost:
+
+1. **The resting value must be exactly `0`, not "approaching `0`".** `1 - k` reaches
+   exactly `0` at `u = 1`. Softening it — `+ (k >= 1 ? 1e-9 : 0)` — leaves the layer on
+   a permanent sub-pixel offset. This is the same discipline as a
+   fade-out that must snap rather than merely converge: a damped value that only
+   approaches its target never satisfies a `=== 0` stop condition.
+2. **An increasing function can produce a decreasing displacement.** The layer moves
+   *down* while `y` climbs from `-1` to `0`. Writing "monotone non-increasing" for it is
+   the natural mistake, and it passes a casual eyeball. Assert the direction explicitly,
+   and phrase the label so the direction is auditable:
+   `sceneDropY is monotone increasing over the whole range (scrolling back climbs it)`
+   with the seed at `-Infinity` and `if (y < prev - 1e-12) ok = false`.
+3. **Clamp the progress.** `p` is negative before the span and greater than 1 after it;
+   without the clamp the layer leaves the viewport.
+
+Assert the degenerate inputs too — `span` null, start `===` end, start `>` end — all
+`0`. A branch that only exists to survive bad input is the one branch no happy-path test
+reaches.
+
+## Assertion style: set equality, not `size >= N`
+
+An assertion like `check(refs.size >= 8)` passes when the regex silently stops matching
+and the set collapses to whatever still matched. It tests "at least something happened",
+which is the one thing you already knew. Assert the exact set, in both directions:
+
+```js
+// Wrong: a regex that stops matching still passes
+check(refs.size >= 8, 'media refs found');
+
+// Correct: both a missing ref and an unexpected new one go red
+const EXPECTED = ['intro-loop.mp4', 'intro.jpeg', 'main.mp4', /* ... */];
+EXPECTED.forEach(f => check(refs.has(f), 'referenced: ' + f));
+[...refs].forEach(f => check(EXPECTED.includes(f), 'no stray ref: ' + f));
+```
+
+The same reasoning applies to counts: `exactly 3 scene layers` beats `at least 3`, and
+when the *keys* matter, assert the key set rather than the count. A layer whose key
+never matches the value it is switched by is **permanently invisible while every
+"the layer exists" assertion stays green** — a silent no-op is exactly what a count
+cannot see.
+
+### Record a deliberate relaxation in the assertion itself
+
+Sometimes a previously locked requirement has to be broken on purpose (here: card text
+had to be real selectable markup, and a raster replacement broke that). Write the
+relaxation into the test as a comment naming what was traded and why:
+
+```js
+/* Explicit relaxation, not a post-hoc concession: the three cards are now part of a
+   flat image, so their text is no longer selectable. It is preserved in .sr-only, and
+   the assertion below enforces exactly that. */
+```
+
+Without that comment the next reader cannot distinguish a decision from a drift, and the
+default assumption — that the older, stricter-looking assertion was correct — is wrong.
+
+### Give every new assertion teeth
+
+A new assertion that cannot go red is not a test. For each one, copy the sources to a
+temp dir, break exactly one thing, run **the real checker** with its source directory
+patched to the temp dir, and assert the FAIL count is non-zero. Patch the directory
+constant — never copy the regexes, or the two copies drift and the teeth stop
+corresponding to the assertion.
+
+```
+run(mutated, label, expectFail):  assert  (fails.length > 0) === expectFail
+baseline (no mutation, expectFail = false)   // if this is red, nothing else means anything
+```
+
+Keep the media directory pointed at the **real** one while mutating the sources. A
+mutation that breaks a referenced file path reddens "every reference resolves" for every
+mutation, and that noise buries the signal you are actually testing.
 
 ## Scroll-driven video scrubbing
 

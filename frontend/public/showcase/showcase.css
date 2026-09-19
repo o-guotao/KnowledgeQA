@@ -3,7 +3,7 @@
 /* ==========================================================================
    滚动叙事作品集 — 样式
    只还原 frontend/assets/示例.jpg 的「文字排版语言」，不还原它的背景。
-   全站背景恒定为 media/bg-wall.jpeg。
+   背景：一层恒定底图 + 按节切换的分镜图，见下面的 §0。
    ========================================================================== */
 
 :root {
@@ -52,7 +52,20 @@ body {
 
 
 /* ==========================================================================
-   0. 全站唯一固定背景 —— 恒定不变，不随板块或进度切换
+   0. 背景层 —— 恒定底图 + 按节切换的分镜图
+
+   底图（分镜里那面青灰墙，裁自 beat-1.jpeg）恒定不变，main 视频缺失时
+   它就是画面本体。其上的 .backdrop__scene 按 data-scene 与同名的 data-copy
+   绑定，逐节淡入淡出；没给层的两节（初次见遇 / 作品预览）自然露出底图，
+   所以不需要任何 JS 分支。
+
+   为什么不另开一层 fixed：整条 z 序是**单调递增**断言锁着的
+   （背景 0 < 影像 1 < …），要在 0 与 1 之间插一层就得用小数，而 z-index
+   不接受。挂在 .backdrop 内部则整块仍占 z-index 0，整条链一个数都不动。
+
+   注意这几层压在**影像之下**：main.mp4 一旦到位，四个主段都会被它盖住，
+   分镜背景届时只在视频缺失时才看得见。这是分层正确的代价，不是疏漏 ——
+   要让背景盖过视频，得把 .stage 与 .backdrop 的关系整个倒过来。
    ========================================================================== */
 
 .backdrop {
@@ -64,6 +77,49 @@ body {
   background-size: cover;
   background-position: center;
   background-repeat: no-repeat;
+}
+
+.backdrop__scene {
+  position: absolute;
+  inset: 0;
+  background-image: var(--scene);
+  background-size: cover;
+  background-position: center;
+  background-repeat: no-repeat;
+  opacity: 0;
+  visibility: hidden;
+  transition: opacity var(--fade) ease, visibility 0s linear var(--fade);
+}
+
+.backdrop__scene.is-active {
+  opacity: 1;
+  visibility: visible;
+  transition: opacity var(--fade) ease, visibility 0s;
+}
+
+/* 无限可能那一层：位移由 JS 按滚动进度写进 transform（负值 = 在视口上方）。
+   transform 在这里是安全的 —— 这一层是叶子、没有 fixed 后代，
+   不触发「包含块变成自己」那个陷阱。 */
+.backdrop__scene[data-drop] { transform: translate3d(0, -100%, 0); }
+
+
+/* --------------------------------------------------------------------------
+   视觉隐藏但留在无障碍树与检索里。
+   作品文件夹的内页换成位图之后，卡片正文靠它保住 ——
+   读屏念得到、Ctrl+F 搜得到。用 clip-path + clip 双写覆盖新旧浏览器。
+   -------------------------------------------------------------------------- */
+
+.sr-only {
+  position: absolute;
+  width: 1px;
+  height: 1px;
+  margin: -1px;
+  padding: 0;
+  border: 0;
+  overflow: hidden;
+  clip: rect(0 0 0 0);
+  clip-path: inset(50%);
+  white-space: nowrap;
 }
 
 
@@ -512,11 +568,14 @@ body {
    6.7 作品文件夹面板（03 节）
 
    整屏面板，替换掉「一段左栏文案」的常规节形态：参考视频里这一屏
-   有它自己的构图（居中眉题与标题 + 右上收起药丸 + 三张卡 + 文件夹本体）。
+   有它自己的构图（居中眉题与标题 + 右上收起药丸 + 内容区）。
 
-   卡片上是 HTML 真文本。参考图只借排版 —— 文字必须是可选中、可搜索的
-   真文本。卡片**画面**（pony / 人物 / 马）是渲染图，从 beat-2.jpeg 派生，
-   文件夹本体也是。派生脚本与抠图判据见任务文档。
+   内容区是两个状态的「开合」（v6）：封面是合着的文件夹（folder.png），
+   点开换成内页整图（beat-2.jpeg），弹出过渡。参考视频里这一屏的操作
+   提示就是「三指 · 开合 · 翻页」—— 开合是这个面板的主手势，
+   所以翻开/合上落在内容区自己身上，收起整个面板才是「点空白栏 / ESC」。
+
+   内页是位图，卡片正文因此不再可选中；原文留在 index.html 的 .sr-only 里。
    ========================================================================== */
 
 .copy--panel {
@@ -528,8 +587,11 @@ body {
   flex-direction: column;
   align-items: center;
   padding: clamp(4.5rem, 11vh, 7rem) var(--gut) clamp(3rem, 7vh, 5rem);
-  /* 面板要能接收点击（点空白处收起）—— .copy-layer 是 pointer-events: none */
-  pointer-events: auto;
+  /* 面板本身**不吃点击** —— 它 inset:0 会盖住顶栏（z-index 5 < 文案层 6），
+     而它是半透明的：五个导航看着可见却点不到，点任意一个都被面板吃掉。
+     可点区只留给真正是「东西」的两处：内容区（= 提示里的「空白栏」）
+     与收起按钮。 */
+  pointer-events: none;
 }
 
 .folder__head {
@@ -575,6 +637,7 @@ body {
   letter-spacing: .1em;
   text-shadow: none;
   cursor: pointer;
+  pointer-events: auto;           /* .copy--panel 整体是 none，这里要单独开 */
   transition: background-color .25s ease, color .25s ease;
 }
 
@@ -582,7 +645,7 @@ body {
 
 .folder__close-x { font-size: 1.1em; line-height: 1; }
 
-/* ── 卡片与文件夹的堆叠 ─────────────────────────────────────────────── */
+/* ── 内容区：封面 ⇄ 内页（开合） ─────────────────────────────────────── */
 
 .folder__deck {
   position: relative;
@@ -591,68 +654,90 @@ body {
   max-width: 58rem;
   min-height: clamp(17rem, 46vh, 30rem);
   margin-top: clamp(1.5rem, 4vh, 3rem);
+  /* 这一块就是提示里的「空白栏」—— 点它收起整个面板。
+     可点区只到这里为止：面板的其余部分（含顶栏那一条）都不吃点击。 */
+  pointer-events: auto;
 }
 
-.fcard {
-  position: absolute;
-  bottom: 30%;
-  width: 27%;
-  padding: .5rem .5rem 1.1rem;
-  border-radius: 1rem;
-  background: #EFE0CC;
-  box-shadow: 0 18px 42px rgba(20, 24, 20, .5);
-  color: #2A2622;
-  text-shadow: none;              /* 卡片自带奶白底，不吃薄纱的投影 */
-}
-
-/* 扇形摆开：中间那张回正并略微抬高，两侧各倾 6° */
-.fcard--rag   { left: 2%;  transform: rotate(-6deg); }
-.fcard--web   { left: 36%; transform: rotate(0deg) translateY(-7%); z-index: 2; }
-.fcard--agent { left: 70%; transform: rotate(6deg); }
-
-.fcard__art {
-  display: block;
-  width: 100%;
-  height: auto;
-  border-radius: .7rem;
-}
-
-.fcard__body { padding: 0 .85rem; }
-
-/* 色签上移压住画面下沿，并再转一点 —— 参考里签比卡片本身斜得更明显 */
-.fcard__chip {
-  display: inline-block;
-  margin: -1.05rem 0 .7rem;
-  padding: .3em .85em;
-  border-radius: .45em;
-  font-size: clamp(12px, 1.15vw, 15px);
-  font-weight: 600;
-  letter-spacing: .02em;
-  color: #FFF8EC;
-  transform: rotate(-2.5deg);
-  box-shadow: 0 4px 10px rgba(20, 24, 20, .3);
-}
-
-.fcard--rag   .fcard__chip { background: #D9853A; }
-.fcard--web   .fcard__chip { background: #7C8F45; transform: rotate(-1.5deg); }
-.fcard--agent .fcard__chip { background: #3E7FA8; transform: rotate(-3deg); }
-
-.fcard__text {
+/* 两块都是按钮，共用一套重置；差别只在状态与几何。 */
+.folder__cover,
+.folder__page {
+  appearance: none;
   margin: 0;
-  font-size: clamp(11px, 1vw, 13px);
-  line-height: 1.75;
+  padding: 0;
+  border: 0;
+  background: none;
+  cursor: pointer;
 }
 
-/* 文件夹本体压在卡片之上：参考里卡片的下沿是被文件夹前板切掉的 */
-.folder__art {
+/* 封面：合着的文件夹，压在内容区底部居中（与设计稿一致）。 */
+.folder__cover {
   position: absolute;
   left: 50%;
   bottom: 0;
   z-index: 3;
   width: 74%;
+  transform: translateX(-50%) scale(1);
+  transition: opacity .38s ease,
+              transform .38s cubic-bezier(.34, 1.56, .64, 1),
+              visibility 0s linear .38s;
+}
+
+.folder__cover-art {
+  display: block;
+  width: 100%;
   height: auto;
-  transform: translateX(-50%);
   filter: drop-shadow(0 16px 30px rgba(20, 24, 20, .45));
+}
+
+/* 悬停只做极小的放大：这是「可以点」的暗示，不是动效表演。 */
+.folder__cover:hover { transform: translateX(-50%) scale(1.03); }
+
+.folder__cover:focus-visible,
+.folder__page:focus-visible { outline: 2px solid var(--accent); outline-offset: .4rem; }
+
+/* 翻开：封面缩小并淡出，注意力交给内页。 */
+.folder.is-open .folder__cover {
+  opacity: 0;
+  visibility: hidden;
+  transform: translateX(-50%) scale(.84);
+  transition: opacity .3s ease, transform .3s ease, visibility 0s linear .3s;
+}
+
+/* 内页：整图，铺满内容区。
+   起始态缩到 0.86 并透明 —— 翻开的动作由 .is-open 那条曲线完成：
+   回弹曲线（.34,1.56,.64,1）会越过 1 再收回，这一「弹」就是「弹出过渡」。
+   合上时走的是普通缓动，收得干净利落，不弹。 */
+.folder__page {
+  position: absolute;
+  inset: 0;
+  z-index: 4;
+  display: grid;
+  place-items: center;
+  opacity: 0;
+  visibility: hidden;
+  transform: scale(.86);
+  cursor: zoom-out;
+  transition: opacity .3s ease, transform .3s ease, visibility 0s linear .3s;
+}
+
+.folder.is-open .folder__page {
+  opacity: 1;
+  visibility: visible;
+  transform: scale(1);
+  transition: opacity .28s ease,
+              transform .46s cubic-bezier(.34, 1.56, .64, 1),
+              visibility 0s;
+}
+
+.folder__page-art {
+  display: block;
+  max-width: 100%;
+  max-height: 100%;
+  width: auto;
+  height: auto;
+  border-radius: .9rem;
+  box-shadow: 0 24px 60px rgba(20, 24, 20, .55);
 }
 
 .folder__hint {
@@ -877,10 +962,14 @@ body {
   .copy__title { font-size: clamp(2.6rem, 14vw, 4.4rem); }
   .copy__desc  { font-size: 14px; max-width: none; }
 
-  /* ── 作品文件夹：三张横排卡片改为纵向堆叠 ─────────────────────────
-     桌面版每张卡占 27% 宽，在 360px 屏上只剩 ~97px，正文会碎成单字，
-     所以不是等比缩小而是换布局：卡片横过来（画面在左、文字在右），
-     文件夹本体垫在最下面通栏。 */
+  /* ── 作品文件夹：开合在单列里改用「同一个网格单元」叠放 ───────────
+     桌面版两块是绝对定位叠在同一个框里，框高由 min-height 定。单列里
+     框高必须由内容决定，而绝对定位的子元素不撑高父元素 —— 框会塌成 0。
+     所以换成两块落在**同一个网格单元**：仍然是叠加互斥，仍然有弹出过渡，
+     框高取两者的较大值。
+
+     封面在单元内底对齐：内页比封面高约一倍，不底对齐的话合着的时候
+     封面会顶在框上沿，下面留一大片空。 */
   .copy--panel {
     padding: clamp(4rem, 9vh, 5.5rem) var(--gut) clamp(2rem, 5vh, 3rem);
     overflow-y: auto;               /* 面板比视口高时要能滚 */
@@ -899,43 +988,38 @@ body {
   }
 
   .folder__deck {
-    display: flex;
-    flex-direction: column;
-    gap: .75rem;
+    display: grid;
+    grid-template-columns: 1fr;
+    grid-template-areas: "folder";
     min-height: 0;
     margin-top: 1.2rem;
   }
 
-  .fcard {
+  /* 静态化之后 inset / translateX 全部失效；transform 仍要压平 ——
+     正常流里留着 scale 会把整块缩小、旁边留出可见空白。
+     悬停与两处 .is-open 也一并覆盖：它们与基础规则特异性相同，
+     媒体查询在后所以能盖住，漏掉任何一条都会让那一支继续带 transform。 */
+  .folder__cover,
+  .folder__cover:hover,
+  .folder__page,
+  .folder.is-open .folder__cover,
+  .folder.is-open .folder__page {
     position: static;
-    display: grid;
-    grid-template-columns: 34% 1fr;
-    gap: .7rem;
-    align-items: start;
-    width: auto;
-    padding: .5rem;
-    border-radius: .8rem;
-    transform: none;
-  }
-
-  .fcard--web { transform: none; }
-
-  .fcard__art {
-    height: 100%;
-    min-height: 5.5rem;
-    object-fit: cover;
-    border-radius: .5rem;
-  }
-
-  .fcard__body  { padding: 0; }
-  .fcard__chip  { margin: 0 0 .45rem; transform: none; }
-  .fcard__text  { font-size: 11px; line-height: 1.7; }
-
-  .folder__art {
-    position: static;
+    inset: auto;
+    grid-area: folder;
     width: 100%;
     transform: none;
-    filter: drop-shadow(0 12px 22px rgba(20, 24, 20, .45));
+  }
+
+  .folder__cover { align-self: end; }
+
+  .folder__cover-art { filter: drop-shadow(0 12px 22px rgba(20, 24, 20, .45)); }
+
+  .folder__page-art {
+    width: 100%;
+    max-height: none;               /* 单元高由内容定，百分比上限在这里无意义 */
+    border-radius: .7rem;
+    box-shadow: 0 14px 32px rgba(20, 24, 20, .5);
   }
 
   .folder__hint { letter-spacing: .1em; }

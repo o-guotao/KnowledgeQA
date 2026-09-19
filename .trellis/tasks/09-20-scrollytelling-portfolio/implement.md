@@ -130,6 +130,37 @@ v2 的做法是**一离开首屏就停写** `intro.currentTime`。这满足「�
 - **（不采纳，低）iOS `unlock()` 之后的一次不可见漂移**：`p=0` 时不可见、且是瞬态。修它要在 seek 循环里**再引入一个状态变量** —— 那个循环我已经写错过一次（见 4b 第 2 点）。风险大于收益。
 - **（采纳，低）`tailGuard`**：与 `mouseToIntroTime` 的留白**真正对称**，且防的是浏览器相关的空白末帧。
 
+### 4e. v5 复核记录（独立复核实际跑过的一轮）✅
+
+`trellis-check` 对 **v5 终态**跑了一轮，提了 4 条，**全部采纳**：
+
+1. **顶栏被劫持（真 bug）** —— `.copy--panel` 是 `inset: 0` + `pointer-events: auto` 且 `z-index 6` > 顶栏 `z-index 5`，顶栏**可见但点不动**。修法见 4f。
+2. **prd / design 的 z 序漂移** —— `design.md §12.2` 的表把 `.scrim` 记成 4、`.ripple` 记成 3，与代码相反。已改正，并把「薄纱在波纹之下」的理由重写（v4 写的理由把薄纱当成了文字层，而真正的文字层在 z-index 6，波纹两层都够不着；薄纱左侧压暗到 82%、正是光标常驻处，所以波纹必须在它之上）。
+3. **`CONFIG.sections` 注释过期** —— 已删。
+4. **`.hero__aside-title` 无人覆盖** —— 右栏标题是全页唯一没有溢出断言的长文本。已补 em 预算断言 + 一条反向（去掉 `<br>` 必须变红）。
+
+### 4f. v6 修订（第 6 轮需求）✅
+
+用户原话（含笔误）：**「个人简历背景使用 intro.jepg　作品文件夹背景使用 beat-jepg，左边排版使用 fodler.png，点击后弹出 beat-2.jepg 替换左边内容，特效为弹出过渡效果，无限可能背景使用 beat-3.jepg，活动到这也一个下坠的效果展示出这个图。」**
+
+三处歧义**先问后做**，没有一处靠猜：
+
+| 歧义 | 我的问题 | 你的决定 |
+| --- | --- | --- |
+| `beat-jepg` 缺一个数字 | 哪张图？ | **用证据定，不问**：读 `media/作品示例排版.png`（你给的面板设计稿），背景与 `beat-1.jpeg` 逐项吻合（右侧扶手椅上的小孩、青灰墙），⇒ `beat-1.jpeg` |
+| 点击后「替换左边内容」到底替换成什么 | 三选一 | **封面 → 内页，换成整图**。选项里已写明代价：`beat-2` 的文字是位图，会打破「卡片必须是可选中真文本」 |
+| 「下坠的效果」 | 一次性动画还是滚动驱动？ | **滚动进度驱动**：图从上方坠入并停住，可逆 |
+| 整图背景必然带人物 | 与 v2「背景恒定」冲突怎么办？ | **确认覆盖，直接用整图** |
+
+改动清单：
+
+- `index.html`：`.backdrop` 内加 3 个 `.backdrop__scene`；`.folder__deck` 换成封面按钮 + 内页按钮；卡片原文移入 `.sr-only`；右栏标题加 `<br>`；媒体契约表头重写
+- `showcase.css`：`.backdrop__scene` 基态与 `.is-active`；`.folder__deck` / `.folder__cover` / `.folder__page` 与弹出曲线；`.sr-only`；`.copy--panel { pointer-events: none }`（**这就是 4e 第 1 条的修法**）；移动端改成 `grid-template-areas: "folder"` 让两态共格、过渡保住
+- `showcase.js`：`CONFIG.sceneDrop`；纯函数 `sceneDropY`；`sceneEls` / `dropEl` / `dropSpan`；`applyFrame` 里加「按 `copyKey` 切分镜层」与「下坠位移」两步；文件夹开合重写（`setFolderOpen` + 每按钮各自的监听 + 只挂 `.folder__deck` 的空白关闭）
+- 断言：131 + 250 + 55 = **436**，另加 `v6_teeth.js` 13 条反向验证
+
+**这一轮唯一真的牺牲掉的东西**：卡片文字从「可选中真文本」变成位图。缓解是把原文放进 `.sr-only`（仍可搜索、可读屏），并且这条放宽在 checker 里是**显式写明的注释**，不是事后追认。
+
 ### 5. 自检（无浏览器）✅
 
 ```bash
@@ -151,13 +182,15 @@ node "C:/Users/admin/AppData/Local/Temp/showcase_check.js"
 node "C:/Users/admin/AppData/Local/Temp/showcase_dom_check.js"
 ```
 
-**72 项断言，ALL PASS**：21 个选择器全部命中、`.stage__inner` 恰好 3 个、**`.backdrop` 是 fixed + cover + z 0**、`bg-wall.jpeg` 在 CSS 里**只被引用一次**（多于一次就可能存在随板块切换的背景，与「背景恒定」冲突）、**main 段无 poster** 且全站恰好 2 个 `.stage__poster`、无 `.is-beat` / `posters` / `--px` 死代码、4 个 `.copy` 都声明 `data-pos` 且有 ≥2 种不同取值、3 种落位在 CSS 里都有映射、**`.stage` 无 `transform/filter/will-change`**、`.stage__inner` 有 `transform`、main 无 `autoplay`、intro 有 `autoplay+loop` 作兜底且 JS 会摘掉、`muted+playsinline+preload=auto` 齐全、脚本是传统脚本、`--fade` 为 .5s、全站无 `#000`/`#fff`。
+**72 项断言，ALL PASS**：21 个选择器全部命中、`.stage__inner` 恰好 3 个、**`.backdrop` 是 fixed + cover + z 0**、`bg-wall.jpeg` 在 CSS 里**只被引用一次**（v2 的理由是「背景恒定」；v6 理由换成「底图与逐节图是两条独立的路」，断言本身仍然成立且仍然有用）、**main 段无 poster** 且全站恰好 2 个 `.stage__poster`、无 `.is-beat` / `posters` / `--px` 死代码、4 个 `.copy` 都声明 `data-pos` 且有 ≥2 种不同取值、3 种落位在 CSS 里都有映射、**`.stage` 无 `transform/filter/will-change`**、`.stage__inner` 有 `transform`、main 无 `autoplay`、intro 有 `autoplay+loop` 作兜底且 JS 会摘掉、`muted+playsinline+preload=auto` 齐全、脚本是传统脚本、`--fade` 为 .5s、全站无 `#000`/`#fff`。
 
 **v3 新增 15 项**：`resetEase` / `resetAt` / `mouseMoved` / `introWritten` / `introResetTime` 都在、`shouldWriteIntro` 存在、`intro.currentTime` 由 `introApplied` 驱动（不是读回来当控制量）；CTA 带 `data-goto` 不是死锚点、`href="#work"` 有真实落点、5 个 `data-goto` 全落在 `[0,1]`、JS 绑的是 `[data-goto]` 全集而 `navTabs` 单独保留。
 
 > 断言必须先剥掉注释再判。头一版没剥，`bg-wall.jpeg` 和 `#000 / #fff` 两条被 CSS **注释里**的文字误判成 FAIL —— 代码本身是好的。现在统一用 `cssCode = css.replace(/\/\*[\s\S]*?\*\//g, '')`。
 
 **v4 新增 30 项（72 → 102）**，其中最重要的一条是**推翻我自己 v3 写的断言**。详见下一节。
+
+**v5 → v6 变动**：`.folder__art` / 3 个 `.fcard` 的断言（`exactly 3 .fcard (got 0)` 等 8 条）在 v6 **按新结构重写而非删除**；`refd.size >= 8` 换成对 `EXPECTED_REFS` 的**双向集合相等**（穷举更严，且正则失配不再能蒙混过关）；新增 §1c 分镜层块、§5e-2 右栏标题 em 预算块、§5f-2 文件夹契约块、v5 残骸块。**102 → 250**。
 
 ### 5c. 复核抓到的最高价值一条：我 v3 的断言用错了度量 ⚠️ → 已修
 
@@ -195,7 +228,7 @@ node "C:/Users/admin/AppData/Local/Temp/showcase_ripple_check.js"
 
 ### 5e. 波纹层的 DOM 契约断言
 
-`showcase_dom_check.js` 里新增一段，与 5b 同一套路：**没有**静态 `<canvas>`（由 JS 创建）、传统脚本、无 `fetch` / `import`、`.ripple` 是 `fixed` + `pointer-events: none`、z-index 3、`.scrim` 是 4、有 `clearRect`、有 `'lighter'`、有 `prefers-reduced-motion` 分支、有 `(hover: hover) and (pointer: fine)` 门、有 `visibilitychange`、有 `requestAnimationFrame`、以及**三个坑位守卫**：没有任何元素挂 `pointerleave`、用的是 `documentElement` 的 `mouseleave`、窗口失焦也淡出。
+`showcase_dom_check.js` 里新增一段，与 5b 同一套路：**没有**静态 `<canvas>`（由 JS 创建）、传统脚本、无 `fetch` / `import`、`.ripple` 是 `fixed` + `pointer-events: none`、z-index **4**、`.scrim` 是 **3**（v5 对调；本节写于 v4，当时是反的）、有 `clearRect`、有 `'lighter'`、有 `prefers-reduced-motion` 分支、有 `(hover: hover) and (pointer: fine)` 门、有 `visibilitychange`、有 `requestAnimationFrame`、以及**三个坑位守卫**：没有任何元素挂 `pointerleave`、用的是 `documentElement` 的 `mouseleave`、窗口失焦也淡出。
 
 ### 6. 确认 React 应用未被波及 —— ⚠ 无法作为验收门
 
@@ -247,24 +280,27 @@ v4 波纹层（验收 34–41）：
 
 ### 8. 提交
 
-- 4 张分镜图 + `bg-wall.jpeg` + `folder.png` + `card-rag|web|agent.png` + 首屏视频 + **4 个源文件**（`index.html` / `showcase.css` / `showcase.js` / `ripple.js`）一并 `git add`（用户已明确授权素材「纳入，一并 commit」）
+- 4 张分镜图 + `bg-wall.jpeg` + `folder.png` + 首屏视频 + **4 个源文件**（`index.html` / `showcase.css` / `showcase.js` / `ripple.js`）一并 `git add`（用户已明确授权素材「纳入，一并 commit」）
 - commit message 用中文 → **必须走 `git commit -F <file>`**（把 message 写进文件），不能 `-m "中文"`
 - `frontend/assets/示例.jpg` **不在**我的提交范围（你的参考文件）；`media/作品示例排版.png` 同理 —— 它是面板的设计稿，运行时不加载（见「未决 7」），一并排除
-- **`media/beat-1.jpeg` 与 `media/beat-2.jpeg` 目前无人引用**：它们只是 `bg-wall.jpeg` / `folder.png` / `card-*.png` 的派生源，运行时不用。`public/` 是会被 vite 原样拷进 `dist/` 的目录，所以留在 `media/` 等于每次部署都多带约 1.27MB 死重量。建议移到 `frontend/assets/`（那里已经是「放工作文件、不提交」的位置，`设计视频.mp4` 就在那儿）。**我没有擅自移，等你一句话。**
+- **v6 起引用关系反过来了**：`beat-1.jpeg` / `beat-2.jpeg` / `beat-3.jpeg` / `intro.jpeg` **全部被引用**（分别是作品文件夹背景、内页整图、无限可能背景、个人简历背景），不再是派生源。
+- **v6 新的死重量是 `card-rag.png` / `card-web.png` / `card-agent.png`**：v5 的三张卡片图，其 HTML 已被 `beat-2.jpeg` 整图取代，`index.html` 里再不出现。它们与 `folder.png` 的**派生源**关系也断了（现在不需要再派生）。`public/` 是会被 vite 原样拷进 `dist/` 的目录，留着等于每次部署多带这部分重量。**我没有擅自删**（删文件不可逆，且它们仍是设计资产的来源），等你一句话：移走 / 删除 / 留着都行。
 
 ---
 
 ## 完成定义（DoD）
 
 - [x] `node --check` 对 `showcase.js` 与 `ripple.js` 都通过
-- [x] 纯函数断言 63/63 通过（vm 求值，非 `require`）
+- [x] 纯函数断言 131/131 通过（vm 求值，非 `require`）
 - [x] 波纹纯函数断言 55/55 通过
-- [x] HTML↔JS 契约校验 102/102 通过
+- [x] HTML↔JS 契约校验 250/250 通过
+- [x] **合计 436 条全绿**（v5 为 350 条）
+- [x] **反向验证 13/13 全绿**（`v6_teeth.js`）：每条新断言都有一条「改坏它必须变红」的对照；其中把下坠落点从「精确 0」改成「趋近 0」会同时打红 5 条
 - [x] `frontend/src/` 下 React 代码**零改动**
-- [x] 唯一新增的图片资源是派生出的 `media/bg-wall.jpeg`；4 张分镜图为**移动**
+- [x] 图片资源：v6 新增 `media/folder.png`；`bg-wall.jpeg` 由「唯一新增」退为派生兜底；`card-*.png` 由被引用变为无引用（见「未决 10」）
 - [ ] ~~`cd frontend && npm run build` 通过~~ → **环境既有失败，非本轮引入**；已由「编译范围证据」替代背书（见步骤 6）
-- [ ] PRD §5 的 41 条验收：非手工项已核，`[手工]` 项待你在浏览器确认
-- [ ] 独立复核（`trellis-check`）对 **v4 终态**跑过一轮 —— v3 那轮的复核早于波纹层，不能沿用
+- [ ] PRD §5 的验收：编号至 49，其中 **14 已作废**（v6 改由 42–46 覆盖），实际 **48 条有效**。非手工项已核，`[手工]` 项（45、47）待你在浏览器确认
+- [ ] 独立复核（`trellis-check`）对 **v5 终态**跑过一轮 —— v4 那轮的复核早于文件夹面板，不能沿用；**v6 的改动尚未经过独立复核**
 
 ## 未决 / 待你确认
 
@@ -280,14 +316,21 @@ v4 波纹层（验收 34–41）：
    - 解开了全页唯一读不出的文案：底部提示原文是**「点击空白栏或按 ESC 收起」**（我之前从视频里猜的是「空白处」，已按原文改回）
    - 确认眉标就是 `BIAOGE / SELECTED WORK`（这份文档原先记的 `BIAGE` 是误读）
 
-8. **卡片内容：视频与设计稿不一致，需要你定取哪一版。** 设计稿上三张卡是 `3D设计` / `UI DESIGN` / `插画 IP`，每张底部还有一行英文小标签（`CHARACTER · MODELING · RENDER` / `INTERFACE · EXPERIENCE · ICON` / `ILLUSTRATION · CHARACTER · STORY`），文件夹本体上写着 `Portfolio -Bg`。而参考视频里成品卡片是 `RAG知识库` / `网站设计` / `Agent设计`，**没有那行英文标签**，文件夹本体也没有文字。本页取的是**视频**那一版 —— 你给的是「整体设计效果参考设计视频.mp4」，视频是成品、设计稿是过程稿。若你要的是设计稿那一版（含三行英文标签 + 文件夹上的 `Portfolio -Bg`），改动集中在 `index.html` 的 `.folder__deck` 与 `.fcard` 文案，以及 `media/folder.png` 要重新派生（现在这张是抠掉文字的无字版）。
+8. **卡片内容：视频与设计稿不一致 —— v6 之后这个问题换了个形式，但没消失。** 设计稿上三张卡是 `3D设计` / `UI DESIGN` / `插画 IP`，每张底部还有一行英文小标签（`CHARACTER · MODELING · RENDER` / `INTERFACE · EXPERIENCE · ICON` / `ILLUSTRATION · CHARACTER · STORY`），文件夹本体上写着 `Portfolio -Bg`。而参考视频里成品卡片是 `RAG知识库` / `网站设计` / `Agent设计`，**没有那行英文标签**，文件夹本体也没有文字。v5 取的是**视频**那一版（理由：你给的是「整体设计效果参考设计视频.mp4」，视频是成品、设计稿是过程稿）。
+   **v6 起整页改用 `beat-2.jpeg` 整图，所以「卡片文字」不再是 HTML 文案，而是那张图本身** —— 图上是哪一版，页面就是哪一版，改文案已经改不动它了。若你要换版，得先换 `beat-2.jpeg` 这张图（并且同步改 `.sr-only` 里的原文，否则读屏内容与画面不符，那比没有更糟）。
+   v6 顺带**用上了设计稿的另一处证据**：`作品示例排版.png` 里的背景与 `beat-1.jpeg` 逐项吻合（右下角扶手椅上的小孩、青灰墙），据此确定了「作品文件夹那一节用哪张图」—— 用户原话里的 `beat-jepg` 缺了一个数字，我没有猜。
 
-9. **v5 的独立复核未做**。`trellis-check` 对 v4 终态跑过一轮，v5 加了首屏六块文案、整屏文件夹面板、分节刻度、暂停互动、视线读数，这些改动**没有经过独立复核**，目前只有 343 条离线断言背书。
+9. **v5 / v6 的独立复核未做**。`trellis-check` 只对 v4 终态跑过一轮。v5（首屏六块文案、整屏文件夹面板、分节刻度、暂停互动、视线读数）与 v6（逐节背景、下坠、弹出、顶栏劫持修复）**都没有经过独立复核**，目前只有 436 条离线断言 + 13 条反向验证背书。离线断言能证明「代码按我写的规则成立」，不能替代「这套规则本身对不对」的独立判断。
+
+10. **`card-rag.png` / `card-web.png` / `card-agent.png` 现在无人引用**（详见「提交」一节的说明）。留在 `media/` 会让每次部署多带这部分死重量。**我没删**，等你定：移出 `public/` / 删除 / 保留。
+
+11. **⚠️ `main.mp4` 一旦到位，三张逐节背景在最主要的四个板块里会被完全盖住。** `.stage--main` 是 `position: fixed; inset: 0` 且视频 `object-fit: cover`，铺满整个视口；分镜层在它**下面**（z-index 0 < 1）。也就是说本轮要的「个人简历 / 作品文件夹 / 无限可能各有背景」**只在 `main.mp4` 缺失时可见**。这不是参数问题，是层序的必然结果。两条路：**(a)** 保持现状（分镜层只在无视频时兜底）；**(b)** 把分镜层提到影像之上 —— 那等于放弃 main 视频在主体段的可见性。**这是个方向性决定，我没有擅自反转层序。**
 
 ## 已解决
 
 - ~~outro 视频源~~ → 用户决定 outro 不使用视频，只显示 `beat-3.jpeg` 静态图。页面因此只需 **2 路视频解码**。
-- ~~v1 三层 poster 交叉淡入~~ → v2「背景恒定」需求与之直接冲突，已整体删除；main 缺失时改由 `.backdrop` 兜底。
+- ~~v1 三层 poster 交叉淡入~~ → v2「背景恒定」需求与之直接冲突，已整体删除；main 缺失时改由 `.backdrop` 兜底。**v6 把「逐节背景」重新加回来了，但做法不是恢复 poster**：改用 `.backdrop` 内部的 `.backdrop__scene` 层，与 stage 层互不干扰，所以「main stage 里没有 poster」这条**依然成立**。这是「背景恒不恒定」的第二次翻转（v1 变 → v2 恒定 → v6 变）。
+- ~~v5 的 `.fcard` 三卡结构~~ → v6 用户要求「点击后弹出 `beat-2.jpeg` 替换左边内容」，三张卡的整体被一张整图取代。原文移入 `.sr-only` 保留可搜索性，`object-fit` 与逐卡动画一并删除。
 - ~~v1 整体平移视差~~ → v2 改为鼠标位置擦洗时间轴，`--px` 变量及其所有引用已清除。
 - ~~节拍写死 30 秒~~ → 改为 `beatCuts` 比例，与时长解耦，并加了四条「与时长无关」回归断言。
 - ~~首屏视频素材缺失~~ → 已到位并接入。
