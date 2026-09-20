@@ -7,7 +7,7 @@ const GA_NUMBER: string = import.meta.env.VITE_GA_NUMBER ?? '川公网安备5101
 export function IcpFooter() {
   if (!ICP_NUMBER) return null;
   return (
-    <footer className="pointer-events-none fixed inset-x-0 bottom-1 z-10 text-center">
+    <footer className="border-t border-theme-line bg-theme-deep py-2 text-center">
       <a
         href="https://beian.miit.gov.cn/"
         target="_blank"

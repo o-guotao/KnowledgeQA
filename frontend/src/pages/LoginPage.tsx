@@ -54,7 +54,7 @@ export function LoginPage() {
   };
 
   return (
-    <div className="flex min-h-screen bg-theme-deep text-theme-text">
+    <div className="flex min-h-0 flex-1 overflow-y-auto bg-theme-deep text-theme-text">
       {/* 左半品牌区：沉稳深墨底 + 网格纹理 + 品牌光晕点缀（克制配色） */}
       <div className="relative hidden flex-1 flex-col justify-between overflow-hidden p-12 lg:flex">
         <div className="pointer-events-none absolute inset-0 bg-gradient-to-br from-theme-deep via-theme-bg to-theme-deep" />

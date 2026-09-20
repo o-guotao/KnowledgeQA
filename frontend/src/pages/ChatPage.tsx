@@ -305,7 +305,7 @@ export function ChatPage() {
   );
 
   return (
-    <div className="flex h-dvh overflow-hidden bg-theme-deep">
+    <div className="flex min-h-0 flex-1 overflow-hidden bg-theme-deep">
       {sidebarOpen && <button type="button" aria-label="关闭导航" onClick={() => setSidebarOpen(false)} className="fixed inset-0 z-20 bg-slate-950/40 lg:hidden" />}
       <aside className={`fixed inset-y-0 left-0 z-30 flex w-80 -translate-x-full flex-col gap-5 overflow-y-auto border-r border-white/5 bg-gradient-to-b from-theme-deep via-theme-deep to-theme-bg p-4 shadow-2xl transition-transform lg:static lg:w-72 lg:translate-x-0 lg:shadow-none ${sidebarOpen ? "translate-x-0" : ""}`}>
         <div className="flex items-center justify-between px-1 text-theme-text"><div className="flex items-center gap-2 text-lg font-semibold"><BookOpenText size={21} className="text-brand-light" />内知</div><button type="button" className="rounded-md p-1 text-slate-400 hover:bg-white/10 lg:hidden" aria-label="关闭导航" onClick={() => setSidebarOpen(false)}><X size={18} /></button></div>

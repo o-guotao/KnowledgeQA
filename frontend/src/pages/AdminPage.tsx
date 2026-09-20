@@ -135,7 +135,7 @@ export function AdminPage() {
   };
 
   return (
-    <main className="min-h-screen bg-gradient-to-b from-theme-bg via-theme-bg to-theme-deep px-4 py-8 sm:px-8">
+    <main className="flex-1 overflow-y-auto bg-gradient-to-b from-theme-bg via-theme-bg to-theme-deep px-4 py-8 sm:px-8">
       <div className="mx-auto max-w-[1400px] space-y-6">
         <header className="flex items-center justify-between gap-3">
           <div className="flex items-center gap-3">

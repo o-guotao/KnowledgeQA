@@ -23,24 +23,30 @@ export default function App() {
   return (
     <AuthProvider>
       <BrowserRouter>
-        <Routes>
-          <Route path="/login" element={<LoginPage />} />
-          <Route path="/register" element={<RegisterPage />} />
-          <Route
-            path="/"
-            element={
-              <RequireAuth>
-                <ChatPage />
-              </RequireAuth>
-            }
-          />
-          <Route path="/settings/models" element={<RequireAuth><ModelSettingsPage /></RequireAuth>} />
-          <Route path="/documents" element={<RequireAuth><DocumentsPage /></RequireAuth>} />
-          <Route path="/admin" element={<RequireAuth><AdminPage /></RequireAuth>} />
-          <Route path="/changelog" element={<RequireAuth><ChangelogPage /></RequireAuth>} />
-          <Route path="*" element={<Navigate to="/" replace />} />
-        </Routes>
-        <IcpFooter />
+        {/* 全站纵向骨架：固定视口高（h-dvh），内容区 flex-1 内部各自滚动，
+            页脚恒定可见且不被内容撑跑 —— 否则消息多时整页向下延伸。 */}
+        <div className="flex h-dvh flex-col overflow-hidden bg-theme-deep">
+          <div className="flex min-h-0 flex-1 flex-col">
+            <Routes>
+              <Route path="/login" element={<LoginPage />} />
+              <Route path="/register" element={<RegisterPage />} />
+              <Route
+                path="/"
+                element={
+                  <RequireAuth>
+                    <ChatPage />
+                  </RequireAuth>
+                }
+              />
+              <Route path="/settings/models" element={<RequireAuth><ModelSettingsPage /></RequireAuth>} />
+              <Route path="/documents" element={<RequireAuth><DocumentsPage /></RequireAuth>} />
+              <Route path="/admin" element={<RequireAuth><AdminPage /></RequireAuth>} />
+              <Route path="/changelog" element={<RequireAuth><ChangelogPage /></RequireAuth>} />
+              <Route path="*" element={<Navigate to="/" replace />} />
+            </Routes>
+          </div>
+          <IcpFooter />
+        </div>
       </BrowserRouter>
     </AuthProvider>
   );
