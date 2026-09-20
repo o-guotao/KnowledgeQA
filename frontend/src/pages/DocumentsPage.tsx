@@ -16,8 +16,8 @@ import {
 } from "../api/schemas";
 import { useAuth } from "../auth/AuthContext";
 import { ConfirmDialog } from "../components/ConfirmDialog";
-import { DocMindmap, UNGROUPED } from "../components/DocMindmap";
 import { DocumentPreviewModal, docKind } from "../components/DocumentPreviewModal";
+import { FolderNav } from "../components/FolderNav";
 import { ThemeToggle } from "../components/ThemeToggle";
 import { Badge } from "../components/ui/badge";
 import { Button } from "../components/ui/button";
@@ -113,6 +113,8 @@ export function DocumentsPage() {
   const [folders, setFolders] = useState<string[]>([]);
   const [overviewDocs, setOverviewDocs] = useState<DocumentOverview[]>([]);
   const [stats, setStats] = useState<DocumentStats | null>(null);
+  // 分类导图开关：默认展开（内嵌于左侧导航栏，不挤压右栏列表）
+  const [mapOpen, setMapOpen] = useState(true);
 
   // 我的文档：服务端分页 + 关键词（文件名/标签）；folder 过滤走 extraParams（变化时回第 1 页）
   const docsQuery = usePaginatedQuery<KnowledgeDocument>(
@@ -367,7 +369,7 @@ export function DocumentsPage() {
 
   return (
     <main className="flex-1 overflow-y-auto bg-gradient-to-b from-theme-bg via-theme-bg to-theme-deep px-4 py-8 sm:px-8">
-      <div className="mx-auto max-w-5xl space-y-6">
+      <div className="mx-auto max-w-6xl space-y-6">
         <header className="flex items-center justify-between gap-3">
           <div className="flex items-center gap-3">
             <Button variant="ghost" size="icon" aria-label="返回问答" onClick={() => navigate("/")}>
@@ -441,22 +443,27 @@ export function DocumentsPage() {
           ))}
         </div>
 
+        {/* 主从布局：左栏文件夹导航（桌面常驻）+ 右栏内容主体。
+            列表优先占据第一屏，导图按需在右栏展开。 */}
         {tab === "mine" && (
+        <div className="flex items-start gap-6">
+          <div className="hidden lg:block">
+            <FolderNav
+              docs={overviewDocs}
+              activeFolder={filterFolder}
+              onPickFolder={setFilterFolder}
+              mapOpen={mapOpen}
+              onToggleMap={() => setMapOpen((v) => !v)}
+            />
+          </div>
+          <div className="min-w-0 flex-1 space-y-6">
         <p className="max-w-3xl text-sm leading-6 text-theme-sub">
           上传制度、手册或 FAQ（.txt/.md/.pdf/.docx/.xlsx，图片 .png/.jpg/.webp 仅预览不检索，单个 ≤ 20MB，可一次多选）。
           系统对重复内容/纯图片文件做校验并明确提示；合规文档自动切分入库，之后即可在问答中检索并带引用回答。
           {pendingCount > 0 && " 有文档正在处理，将自动刷新直到完成。"}
         </p>
-        )}
-
-        {tab === "team" && (
-        <p className="max-w-3xl text-sm leading-6 text-theme-sub">
-          团队成员共享的文档，全员可检索与预览；管理（取消共享/删除）由文档所有者或管理员操作。
-        </p>
-        )}
 
         {/* 本批上传归属：文件夹与标签（可选） */}
-        {tab === "mine" && (
         <div className="flex flex-wrap items-center gap-3 rounded-lg border border-theme-line bg-theme-card px-4 py-3 text-sm">
           <label className="flex items-center gap-2 text-theme-sub">
             文件夹
@@ -488,10 +495,9 @@ export function DocumentsPage() {
           </label>
           <span className="text-xs text-theme-sub">应用于本批上传，便于分类与检索</span>
         </div>
-        )}
 
         {/* 待上传/上传结果面板 */}
-        {tab === "mine" && queue.length > 0 && (
+        {queue.length > 0 && (
           <Card>
             <CardContent className="space-y-2 py-4">
               <div className="flex items-center justify-between gap-2">
@@ -557,8 +563,6 @@ export function DocumentsPage() {
           </Card>
         )}
 
-        {tab === "mine" && (
-        <>
         <SearchInput
           value={docsQuery.query}
           onChange={docsQuery.setQuery}
@@ -567,15 +571,8 @@ export function DocumentsPage() {
           className="w-full sm:max-w-sm"
         />
         {docsQuery.error && <p className="text-sm text-red-400">文档加载失败：{docsQuery.error}</p>}
-        {/* 思维导图：文件夹/标签/文件 分类树，点击文件夹节点联动下方列表过滤 */}
-        {overviewDocs.length > 0 && (
-          <DocMindmap
-            docs={overviewDocs}
-            activeFolder={filterFolder}
-            onPickFolder={(f) => setFilterFolder(f)}
-          />
-        )}
-        <div className="flex flex-wrap items-center gap-2 text-sm">
+        {/* 文件夹 chips：lg 以下（左栏隐藏时）的过滤降级；状态 chips 常驻 */}
+        <div className="flex flex-wrap items-center gap-2 text-sm lg:hidden">
           <button
             type="button"
             onClick={() => setFilterFolder(null)}
@@ -602,6 +599,8 @@ export function DocumentsPage() {
               未分组
             </button>
           )}
+        </div>
+        <div className="flex flex-wrap items-center gap-2 text-sm">
           <span className="rounded-full bg-emerald-500/15 px-3 py-1 text-emerald-400">已入库 {readyCount}</span>
           {pendingCount > 0 && (
             <span className="rounded-full bg-amber-500/15 px-3 py-1 text-amber-400">处理中 {pendingCount}</span>
@@ -631,104 +630,7 @@ export function DocumentsPage() {
             )}
           </div>
         )}
-        </>
-        )}
 
-        {tab === "team" && (
-        <section className="space-y-3">
-          <SearchInput
-            value={teamQuery.query}
-            onChange={teamQuery.setQuery}
-            placeholder="搜索文件名 / 标签 / 共享人"
-            ariaLabel="搜索团队空间文档"
-            className="w-full sm:max-w-sm"
-          />
-          {teamQuery.error && <p className="text-sm text-red-400">团队空间加载失败：{teamQuery.error}</p>}
-          {teamDocs.length === 0 ? (
-            <div className="flex flex-col items-center rounded-2xl border border-dashed border-theme-line bg-theme-card/60 px-6 py-16 text-center">
-              <div className="flex h-12 w-12 items-center justify-center rounded-xl bg-brand/15 text-brand-light">
-                <Users size={22} />
-              </div>
-              <p className="mt-5 font-medium text-theme-text">{teamQuery.query !== "" ? "没有匹配的共享文档" : "团队空间还没有共享文档"}</p>
-              <p className="mt-1 text-sm text-theme-sub">{teamQuery.query !== "" ? "换个关键词试试" : "在「我的文档」中点击共享按钮，即可把文档共享给全员检索"}</p>
-            </div>
-          ) : (
-            teamDocs.map((d) => {
-              const meta = STATUS_META[d.status];
-              return (
-                <Card key={d.id} className="transition-shadow hover:shadow-card">
-                  <CardContent className="flex flex-col gap-2 py-4 sm:flex-row sm:items-center sm:justify-between">
-                    <div className="min-w-0">
-                      <div className="flex flex-wrap items-center gap-2">
-                        <FileTypeIcon name={d.filename} />
-                        <p className="truncate font-medium text-theme-text">{d.filename}</p>
-                        <Badge variant={meta.variant}>{meta.label}</Badge>
-                        {d.stale && (
-                          <Badge variant="warning" title={d.stale_reasons.join("\n")}>
-                            需刷新
-                          </Badge>
-                        )}
-                        {d.owner_name && (
-                          <span className="rounded bg-brand/15 px-1.5 py-0.5 text-xs text-brand-light">
-                            {d.owner_name}
-                          </span>
-                        )}
-                      </div>
-                      <p className="mt-1 text-xs text-theme-sub">
-                        {fmtTime(d.created_at)}
-                        {d.status === "ready" && ` · ${d.chunk_count} 个切块`}
-                      </p>
-                    </div>
-                    <div className="flex shrink-0 items-center gap-3">
-                      <Button
-                        variant="ghost"
-                        size="icon"
-                        aria-label={`预览 ${d.filename}`}
-                        onClick={() => setPreview(d)}
-                        className="shrink-0 cursor-pointer text-theme-sub hover:bg-white/10 hover:text-theme-sub"
-                      >
-                        <Eye size={15} />
-                      </Button>
-                      {user?.role === "admin" && (
-                        <>
-                          <Button
-                            variant="ghost"
-                            size="icon"
-                            aria-label={`取消共享 ${d.filename}`}
-                            title="取消共享（移出团队空间）"
-                            disabled={shareTogglingId === d.id}
-                            onClick={() => void toggleShare(d)}
-                            className="shrink-0 cursor-pointer text-theme-sub hover:bg-white/10 hover:text-theme-sub"
-                          >
-                            {shareTogglingId === d.id ? (
-                              <Loader2 size={15} className="animate-spin" />
-                            ) : (
-                              <Share2 size={15} />
-                            )}
-                          </Button>
-                          <Button
-                            variant="ghost"
-                            size="icon"
-                            aria-label={`删除 ${d.filename}`}
-                            disabled={deletingId === d.id}
-                            onClick={() => setSingleConfirm(d)}
-                            className="shrink-0 cursor-pointer text-theme-sub hover:bg-red-500/15 hover:text-red-400"
-                          >
-                            {deletingId === d.id ? <Loader2 size={15} className="animate-spin" /> : <Trash2 size={15} />}
-                          </Button>
-                        </>
-                      )}
-                    </div>
-                  </CardContent>
-                </Card>
-              );
-            })
-          )}
-          <Pagination page={teamQuery.page} pages={teamQuery.pages} total={teamQuery.total} onPageChange={teamQuery.setPage} disabled={teamQuery.loading} />
-        </section>
-        )}
-
-        {tab === "mine" && (
         <section className="space-y-3">
           {docs.length === 0 ? (
             <div className="flex flex-col items-center rounded-2xl border border-dashed border-theme-line bg-theme-card/60 px-6 py-16 text-center">
@@ -894,6 +796,107 @@ export function DocumentsPage() {
           )}
           <Pagination page={docsQuery.page} pages={docsQuery.pages} total={docsQuery.total} onPageChange={docsQuery.setPage} disabled={docsQuery.loading} />
         </section>
+          </div>
+        </div>
+        )}
+
+        {tab === "team" && (
+        <>
+        <p className="max-w-3xl text-sm leading-6 text-theme-sub">
+          团队成员共享的文档，全员可检索与预览；管理（取消共享/删除）由文档所有者或管理员操作。
+        </p>
+        <section className="space-y-3">
+          <SearchInput
+            value={teamQuery.query}
+            onChange={teamQuery.setQuery}
+            placeholder="搜索文件名 / 标签 / 共享人"
+            ariaLabel="搜索团队空间文档"
+            className="w-full sm:max-w-sm"
+          />
+          {teamQuery.error && <p className="text-sm text-red-400">团队空间加载失败：{teamQuery.error}</p>}
+          {teamDocs.length === 0 ? (
+            <div className="flex flex-col items-center rounded-2xl border border-dashed border-theme-line bg-theme-card/60 px-6 py-16 text-center">
+              <div className="flex h-12 w-12 items-center justify-center rounded-xl bg-brand/15 text-brand-light">
+                <Users size={22} />
+              </div>
+              <p className="mt-5 font-medium text-theme-text">{teamQuery.query !== "" ? "没有匹配的共享文档" : "团队空间还没有共享文档"}</p>
+              <p className="mt-1 text-sm text-theme-sub">{teamQuery.query !== "" ? "换个关键词试试" : "在「我的文档」中点击共享按钮，即可把文档共享给全员检索"}</p>
+            </div>
+          ) : (
+            teamDocs.map((d) => {
+              const meta = STATUS_META[d.status];
+              return (
+                <Card key={d.id} className="transition-shadow hover:shadow-card">
+                  <CardContent className="flex flex-col gap-2 py-4 sm:flex-row sm:items-center sm:justify-between">
+                    <div className="min-w-0">
+                      <div className="flex flex-wrap items-center gap-2">
+                        <FileTypeIcon name={d.filename} />
+                        <p className="truncate font-medium text-theme-text">{d.filename}</p>
+                        <Badge variant={meta.variant}>{meta.label}</Badge>
+                        {d.stale && (
+                          <Badge variant="warning" title={d.stale_reasons.join("\n")}>
+                            需刷新
+                          </Badge>
+                        )}
+                        {d.owner_name && (
+                          <span className="rounded bg-brand/15 px-1.5 py-0.5 text-xs text-brand-light">
+                            {d.owner_name}
+                          </span>
+                        )}
+                      </div>
+                      <p className="mt-1 text-xs text-theme-sub">
+                        {fmtTime(d.created_at)}
+                        {d.status === "ready" && ` · ${d.chunk_count} 个切块`}
+                      </p>
+                    </div>
+                    <div className="flex shrink-0 items-center gap-3">
+                      <Button
+                        variant="ghost"
+                        size="icon"
+                        aria-label={`预览 ${d.filename}`}
+                        onClick={() => setPreview(d)}
+                        className="shrink-0 cursor-pointer text-theme-sub hover:bg-white/10 hover:text-theme-sub"
+                      >
+                        <Eye size={15} />
+                      </Button>
+                      {user?.role === "admin" && (
+                        <>
+                          <Button
+                            variant="ghost"
+                            size="icon"
+                            aria-label={`取消共享 ${d.filename}`}
+                            title="取消共享（移出团队空间）"
+                            disabled={shareTogglingId === d.id}
+                            onClick={() => void toggleShare(d)}
+                            className="shrink-0 cursor-pointer text-theme-sub hover:bg-white/10 hover:text-theme-sub"
+                          >
+                            {shareTogglingId === d.id ? (
+                              <Loader2 size={15} className="animate-spin" />
+                            ) : (
+                              <Share2 size={15} />
+                            )}
+                          </Button>
+                          <Button
+                            variant="ghost"
+                            size="icon"
+                            aria-label={`删除 ${d.filename}`}
+                            disabled={deletingId === d.id}
+                            onClick={() => setSingleConfirm(d)}
+                            className="shrink-0 cursor-pointer text-theme-sub hover:bg-red-500/15 hover:text-red-400"
+                          >
+                            {deletingId === d.id ? <Loader2 size={15} className="animate-spin" /> : <Trash2 size={15} />}
+                          </Button>
+                        </>
+                      )}
+                    </div>
+                  </CardContent>
+                </Card>
+              );
+            })
+          )}
+          <Pagination page={teamQuery.page} pages={teamQuery.pages} total={teamQuery.total} onPageChange={teamQuery.setPage} disabled={teamQuery.loading} />
+        </section>
+        </>
         )}
 
         {preview && (
