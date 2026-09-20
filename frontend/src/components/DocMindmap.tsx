@@ -292,28 +292,57 @@ export function DocMindmap({ docs, activeFolder, onPickFolder }: DocMindmapProps
     <div className="rounded-xl border border-theme-line bg-theme-card p-4 shadow-soft">
       <div className="mb-3 flex items-center gap-2 text-xs text-theme-sub">
         {activeFolder === null ? (
-          <>
-            <Layers size={13} className="text-brand-light" />
-            <span>文件夹总览 · 共 {docs.length} 份文档</span>
-            <span className="ml-auto flex items-center gap-1">
-              <FolderOpen size={12} /> 点击文件夹查看分类导图
-            </span>
-          </>
+          <Layers size={13} className="text-brand-light" />
         ) : (
-          <>
-            <FolderOpen size={13} className="text-brand-light" />
-            <span>已聚焦文件夹 · 点击根节点返回全部</span>
-            <span className="ml-auto flex items-center gap-1">
-              <Hash size={12} /> 点击标签折叠
-            </span>
-          </>
+          <FolderOpen size={13} className="text-brand-light" />
         )}
+        <AnimatePresence mode="wait" initial={false}>
+          <motion.span key={activeFolder ?? "grid"} initial={{ opacity: 0, y: 4 }} animate={{ opacity: 1, y: 0 }} exit={{ opacity: 0, y: -4 }} transition={{ duration: 0.15 }} className="flex flex-1 items-center gap-2">
+            {activeFolder === null ? (
+              <>
+                <span>文件夹总览 · 共 {docs.length} 份文档</span>
+                <span className="ml-auto flex items-center gap-1">
+                  <FolderOpen size={12} /> 点击文件夹查看分类导图
+                </span>
+              </>
+            ) : (
+              <>
+                <span>已聚焦文件夹 · 点击根节点返回全部</span>
+                <span className="ml-auto flex items-center gap-1">
+                  <Hash size={12} /> 点击标签折叠
+                </span>
+              </>
+            )}
+          </motion.span>
+        </AnimatePresence>
       </div>
-      {activeFolder === null ? (
-        <FolderGrid docs={docs} onPickFolder={onPickFolder} />
-      ) : (
-        <FocusTree docs={docs} activeFolder={activeFolder} onPickFolder={onPickFolder} />
-      )}
+      {/* 双态有序过渡：先出后进（mode=wait）+ 最小高度，避免两态高度差
+          导致容器跳变、滚动条闪现 */}
+      <AnimatePresence mode="wait" initial={false}>
+        {activeFolder === null ? (
+          <motion.div
+            key="grid"
+            initial={{ opacity: 0 }}
+            animate={{ opacity: 1 }}
+            exit={{ opacity: 0 }}
+            transition={{ duration: 0.13 }}
+            className="min-h-[200px]"
+          >
+            <FolderGrid docs={docs} onPickFolder={onPickFolder} />
+          </motion.div>
+        ) : (
+          <motion.div
+            key="tree"
+            initial={{ opacity: 0 }}
+            animate={{ opacity: 1 }}
+            exit={{ opacity: 0 }}
+            transition={{ duration: 0.13 }}
+            className="min-h-[200px]"
+          >
+            <FocusTree docs={docs} activeFolder={activeFolder} onPickFolder={onPickFolder} />
+          </motion.div>
+        )}
+      </AnimatePresence>
     </div>
   );
 }
