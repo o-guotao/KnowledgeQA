@@ -150,7 +150,8 @@ function layoutTarget(tree: TreeNode, collapsed: Set<string>) {
       cursor += ROW_H;
     } else {
       const ys = n.children.map(walk);
-      y = (ys[0] + ys[ys.length - 1]) / 2;
+      // 展开分支必有子节点，ys 非空
+      y = (ys[0]! + ys[ys.length - 1]!) / 2;
     }
     pos.set(n.key, { x: 0, y, w });
     return y;
@@ -189,7 +190,8 @@ function MindmapLink({
   child: NodeMv;
   active: boolean;
 }) {
-  const d = useTransform([parent.x, parent.y, child.x, child.y], ([px, py, cx, cy]) => {
+  const d = useTransform([parent.x, parent.y, child.x, child.y], (latest: unknown[]) => {
+    const [px, py, cx, cy] = latest as [number, number, number, number];
     const x0 = px + parentW;
     const mx = (x0 + cx) / 2;
     return `M ${x0} ${py} C ${mx} ${py}, ${mx} ${cy}, ${cx} ${cy}`;

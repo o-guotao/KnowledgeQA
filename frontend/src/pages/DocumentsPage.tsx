@@ -17,6 +17,7 @@ import {
 import { useAuth } from "../auth/AuthContext";
 import { ConfirmDialog } from "../components/ConfirmDialog";
 import { DocumentPreviewModal, docKind } from "../components/DocumentPreviewModal";
+import { UNGROUPED } from "../components/DocMindmap";
 import { FolderNav } from "../components/FolderNav";
 import { ThemeToggle } from "../components/ThemeToggle";
 import { Badge } from "../components/ui/badge";
