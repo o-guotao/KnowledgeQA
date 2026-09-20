@@ -64,8 +64,8 @@ export function ChatPage() {
   const [toolCall, setToolCall] = useState<PendingToolCall | null>(null);
   const [quotaRefreshKey, setQuotaRefreshKey] = useState(0);
   const [quotaExhausted, setQuotaExhausted] = useState(false);
-  // 检索片段数 top_k：与后端 rag_top_k 默认一致，可在侧栏「知识库设置」手动调整
-  const [topK, setTopK] = useState(5);
+  // 检索片段数模式：auto=按问题复杂度自适应（默认）；三档为手动指定 top_k（精确 3 / 均衡 5 / 广泛 10）
+  const [topKMode, setTopKMode] = useState<"auto" | number>("auto");
   const [sidebarOpen, setSidebarOpen] = useState(false);
   // 应用版本号（单一来源：后端 /api/meta/version ↔ 根 VERSION 文件）
   const [appVersion, setAppVersion] = useState("");
@@ -275,7 +275,7 @@ export function ChatPage() {
                 m.id === assistantLocalId ? { ...m, status: "failed", error: message } : m,
               ),
             ),
-        }, topK);
+        }, topKMode === "auto" ? undefined : topKMode);
       } finally {
         if (turnSessionRef.current === sessionId) turnSessionRef.current = null;
       }
@@ -288,7 +288,7 @@ export function ChatPage() {
         ),
       );
     },
-    [activeId, send, handleEvent, topK],
+    [activeId, send, handleEvent, topKMode],
   );
 
   const onToolResolved = useCallback(
@@ -350,19 +350,31 @@ export function ChatPage() {
         <div className="border-b border-white/5 pb-3">
           <p className="px-1 text-xs font-medium text-slate-400">知识库设置</p>
           <div className="mt-2.5 px-1">
-            <div className="flex items-center justify-between text-xs text-slate-500">
-              <span>检索片段数 top_k</span>
-              <span className="font-mono text-brand-light">{topK}</span>
+            <p className="text-xs text-slate-500">检索范围</p>
+            <div className="mt-1.5 grid grid-cols-4 gap-1" role="radiogroup" aria-label="检索范围">
+              {([
+                { value: "auto" as const, label: "自动", desc: "按问题复杂度自适应" },
+                { value: 3, label: "精确", desc: "3 块，单点事实" },
+                { value: 5, label: "均衡", desc: "5 块，常规问题" },
+                { value: 10, label: "广泛", desc: "10 块，列举/对比" },
+              ]).map((opt) => (
+                <button
+                  key={opt.label}
+                  type="button"
+                  role="radio"
+                  aria-checked={topKMode === opt.value}
+                  title={opt.desc}
+                  onClick={() => setTopKMode(opt.value)}
+                  className={`cursor-pointer rounded-md border px-1.5 py-1.5 text-xs transition-colors ${
+                    topKMode === opt.value
+                      ? "border-brand/40 bg-brand/15 font-medium text-brand-light"
+                      : "border-theme-line bg-theme-input text-theme-sub hover:border-brand/30 hover:text-theme-text"
+                  }`}
+                >
+                  {opt.label}
+                </button>
+              ))}
             </div>
-            <input
-              type="range"
-              min={1}
-              max={20}
-              value={topK}
-              onChange={(e) => setTopK(Number(e.target.value))}
-              className="mt-1.5 w-full accent-brand"
-              aria-label="检索片段数 top_k"
-            />
           </div>
         </div>
         <SessionList

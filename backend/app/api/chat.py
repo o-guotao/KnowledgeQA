@@ -36,7 +36,7 @@ from app.schemas.chat import (
 from app.services import cost, injection, langfuse_tracing
 from app.services.deepseek import ModelCallError, ModelTimeoutError
 from app.services.embedding import embed_query
-from app.services.rag import RAG_SYSTEM_PROMPT, build_rag_user_content, retrieve
+from app.services.rag import RAG_SYSTEM_PROMPT, auto_top_k, build_rag_user_content, retrieve
 from app.services.model_configs import ProviderConfig, resolve_provider_config
 from app.services.openai_compatible import stream_chat
 from app.services.tools import REQUIRE_CONFIRM, TOOL_DEFINITIONS, execute_tool, parse_tool_args
@@ -135,9 +135,16 @@ async def _event_stream(
                 t0 = time.perf_counter()
                 timing: dict = {}
                 query_vec = await embed_query(body.content)
+                # top_k 决策：用户显式指定（前端三档）→ 直接用、不截断；
+                # 未指定（自动）→ L2 规则路由定上限 + L3 重排分数断崖截断定实际块数
+                if body.top_k is not None:
+                    k, adaptive = body.top_k, False
+                else:
+                    k, adaptive = auto_top_k(body.content), True
                 async with SessionLocal() as db:
                     chunks = await retrieve(
-                        db, user.id, query_vec, top_k=body.top_k, query_text=body.content, timing=timing
+                        db, user.id, query_vec, top_k=k, query_text=body.content,
+                        timing=timing, adaptive_k=adaptive,
                     )
                 # recall_ms = embed + 向量/关键词/RRF（不含重排）
                 recall_ms = round((time.perf_counter() - t0) * 1000 - timing.get("rerank_ms", 0.0), 1)
