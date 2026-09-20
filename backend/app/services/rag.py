@@ -259,6 +259,31 @@ def _rrf_fuse(
     return result
 
 
+# ---- L2 规则路由：按问题类型决定召回上限（auto 模式） ----
+# 列举/汇总/对比类问题：证据分散在多个块/多份文档，需要更大召回上限
+_BROAD_HINTS = (
+    "哪些", "所有", "全部", "对比", "区别", "差异", "总结", "汇总", "清单",
+    "整理", "归纳", "框架", "体系", "流程", "分别", "各方面", "多少种", "多少类",
+)
+# 单点事实类问题：答案集中在 1-2 个块，召回多了反引入噪音（限短问题，长描述按默认）
+_NARROW_HINTS = (
+    "多少", "什么时候", "哪天", "几号", "是否", "能不能", "怎么办理", "怎么办", "如何", "谁负责",
+)
+
+
+def auto_top_k(query: str, default: int = 5, broad: int = 10, narrow: int = 3) -> int:
+    """按问题复杂度路由召回上限：列举/对比 → broad，单点事实（短问句）→ narrow，其余 → default。
+
+    纯启发式零成本；先判 broad（"多少种"优先于 narrow 的"多少"）。
+    """
+    q = query.strip()
+    if any(h in q for h in _BROAD_HINTS):
+        return broad
+    if len(q) <= 30 and any(h in q for h in _NARROW_HINTS):
+        return narrow
+    return default
+
+
 async def retrieve(
     db: AsyncSession,
     user_id: uuid.UUID,
@@ -266,11 +291,14 @@ async def retrieve(
     top_k: int | None = None,
     query_text: str | None = None,
     timing: dict | None = None,
+    adaptive_k: bool = False,
 ) -> list[RetrievedChunk]:
     """向量召回 + 混合检索 + 可选重排，最终返回 top_k。
 
     timing 传入 dict 时回填分阶段耗时（毫秒，并发安全）：
     recall_ms=向量+关键词+RRF（不含 embed 与重排）、rerank_ms=重排（未开启不写入）。
+    adaptive_k=True（auto 模式）时，重排后按分数断崖截断：top_k 作上限，
+    证据集中时实际进 prompt 的块数更少（下限 3）；用户显式指定 top_k 时不截断。
     """
     settings = get_settings()
     k = top_k or settings.rag_top_k
@@ -291,7 +319,7 @@ async def retrieve(
         from app.services.rerank import rerank
 
         t1 = time.perf_counter()
-        candidates = await rerank(query_text, candidates, k)
+        candidates = await rerank(query_text, candidates, k, adaptive=adaptive_k)
         if timing is not None:
             timing["rerank_ms"] = round((time.perf_counter() - t1) * 1000, 1)
     candidates = candidates[:k]
