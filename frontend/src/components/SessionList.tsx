@@ -64,14 +64,22 @@ export function SessionList({
           onClick={() => onSelect(s.id)}
           role="button"
           tabIndex={0}
-          onKeyDown={(e) => e.key === "Enter" && onSelect(s.id)}
+          onKeyDown={(e) => {
+            // Enter / Space 都要能选中（Space 需 preventDefault 防页面滚动）
+            if (e.key === "Enter" || e.key === " ") {
+              e.preventDefault();
+              onSelect(s.id);
+            }
+          }}
         >
           <MessageSquare size={14} className="shrink-0 opacity-60" />
           <span className="flex-1 truncate">{s.title}</span>
+          {/* 常显而非 hover-only：hidden group-hover:block 会让键盘与触屏用户无法删除会话；
+              28px 点击区满足 WCAG 2.2 Target Size（≥24px） */}
           <button
             type="button"
             aria-label="删除会话"
-            className="hidden rounded p-0.5 text-slate-500 hover:text-red-400 group-hover:block cursor-pointer"
+            className="rounded p-1.5 text-slate-500 opacity-40 transition-opacity hover:text-red-400 focus-visible:opacity-100 group-hover:opacity-100 cursor-pointer"
             onClick={(e) => {
               e.stopPropagation();
               onDelete(s.id);

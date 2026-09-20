@@ -307,14 +307,17 @@ export function ChatPage() {
   return (
     <div className="flex h-dvh overflow-hidden bg-theme-deep">
       {sidebarOpen && <button type="button" aria-label="关闭导航" onClick={() => setSidebarOpen(false)} className="fixed inset-0 z-20 bg-slate-950/40 lg:hidden" />}
-      <aside className={`fixed inset-y-0 left-0 z-30 flex w-80 -translate-x-full flex-col gap-5 overflow-y-auto border-r border-white/5 bg-gradient-to-b from-theme-deep via-theme-deep to-theme-bg p-4 shadow-2xl transition-transform lg:static lg:w-72 lg:translate-x-0 lg:shadow-none ${sidebarOpen ? "translate-x-0" : ""}`}>
+      {/* 关闭态 invisible（而非仅位移）：visibility:hidden 会把屏外抽屉移出 Tab 序与无障碍树，
+          否则键盘用户焦点会进入视口外的元素（WCAG 2.2 Focus Not Obscured）。
+          visibility 0s 延迟过渡：收起时先滑完 0.25s 再隐藏，展开时立即可见。 */}
+      <aside className={`fixed inset-y-0 left-0 z-30 flex w-80 -translate-x-full flex-col gap-5 overflow-y-auto border-r border-white/5 bg-gradient-to-b from-theme-deep via-theme-deep to-theme-bg p-4 shadow-2xl lg:static lg:w-72 lg:translate-x-0 lg:shadow-none ${sidebarOpen ? "visible translate-x-0 [transition:transform_.25s_ease,visibility_0s]" : "invisible lg:visible [transition:transform_.25s_ease,visibility_0s_linear_.25s]"}`}>
         <div className="flex items-center justify-between px-1 text-theme-text"><div className="flex items-center gap-2 text-lg font-semibold"><BookOpenText size={21} className="text-brand-light" />内知</div><button type="button" className="rounded-md p-1 text-slate-400 hover:bg-white/10 lg:hidden" aria-label="关闭导航" onClick={() => setSidebarOpen(false)}><X size={18} /></button></div>
         <p className="-mt-3 px-1 text-xs text-slate-500">
           KnowledgeQA · 内部知识助手{appVersion && (
             <button
               type="button"
-              onClick={() => navigate("/changelog")}
-              className="ml-2 cursor-pointer rounded bg-white/10 px-1.5 py-0.5 font-mono text-[10px] text-brand-light hover:bg-white/15"
+              onClick={() => navigate("/app/changelog")}
+              className="ml-2 cursor-pointer rounded bg-white/10 px-1.5 py-1 font-mono text-[10px] text-brand-light hover:bg-white/15"
               title="查看更新日志"
             >
               v{appVersion}
@@ -323,11 +326,11 @@ export function ChatPage() {
         </p>
         <nav className="flex flex-col gap-1 border-b border-white/10 pb-3" aria-label="主导航">
           {[
-            { label: "对话", to: "/", icon: MessageSquare },
-            { label: "文档库", to: "/documents", icon: Files },
-            { label: "模型设置", to: "/settings/models", icon: Settings2 },
-            ...(user?.role === "admin" ? [{ label: "管理后台", to: "/admin", icon: LayoutDashboard }] : []),
-            { label: "更新日志", to: "/changelog", icon: History },
+            { label: "对话", to: "/app", icon: MessageSquare },
+            { label: "文档库", to: "/app/documents", icon: Files },
+            { label: "模型设置", to: "/app/settings/models", icon: Settings2 },
+            ...(user?.role === "admin" ? [{ label: "管理后台", to: "/app/admin", icon: LayoutDashboard }] : []),
+            { label: "更新日志", to: "/app/changelog", icon: History },
           ].map(({ label, to, icon: Icon }) => {
             const active = location.pathname === to;
             return (

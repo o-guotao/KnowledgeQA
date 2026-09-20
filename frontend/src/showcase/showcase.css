@@ -6,11 +6,15 @@
    背景：一层恒定底图 + 按节切换的分镜图，见下面的 §0。
    ========================================================================== */
 
-:root {
+/* 全局规则收拢在 .showcase 作用域内：本 CSS 经 Vite 注入后全局常驻，
+   不能污染 /app 应用页（body/html/:root 一概不碰）。 */
+.showcase {
   /* 色板：取自参考图，全站无 #000 / #fff */
   --ink:        #EDE7DC;                  /* 奶白 */
-  --ink-dim:    rgba(237, 231, 220, .72);
-  --ink-faint:  rgba(237, 231, 220, .42);
+  --ink-dim:    rgba(237, 231, 220, .72); /* 合成后 ≈ 6.1:1（AA 通过） */
+  /* .62 而非 .42：faint 用在 11–12px 的 HUD 行 / 文件夹提示 / 眉题 / 顶栏署名上，
+     合成到 #2E362F 后 .42 只有 3.1:1（小字 AA 需 4.5:1），.62 为 ≈4.9:1。 */
+  --ink-faint:  rgba(237, 231, 220, .62);
   --bg-deep:    #2E362F;                  /* 背景图未加载时的底色 */
   --accent:     #E8A33D;                  /* 暖沙金，仅用于 eyebrow / 进度条 / CTA */
 
@@ -34,21 +38,19 @@
   --py:   0px;                            /* 首屏鼠标纵向微位移，由 JS 写入 */
 
   --shadow-text: 0 1px 12px rgba(20, 24, 20, .55);   /* 只给顶部/底部 UI，不动薄纱 */
-}
 
-* { box-sizing: border-box; }
-
-html { background: var(--bg-deep); }
-
-body {
-  margin: 0;
+  /* 原 body 的视觉职责（bg/色/字体）随作用域下沉到容器 */
   background: var(--bg-deep);
   color: var(--ink);
   font-family: var(--font-body);
   -webkit-font-smoothing: antialiased;
   text-rendering: optimizeLegibility;
-  overscroll-behavior-y: none;            /* 防 iOS 橡皮筋把进度拉出 [0,1] */
 }
+
+.showcase *, .showcase *::before, .showcase *::after { box-sizing: border-box; }
+
+/* 防 iOS 橡皮筋把进度拉出 [0,1] —— 挂在 body 类上（页面卸载时由组件移除） */
+body.showcase-on { overscroll-behavior-y: none; }
 
 
 /* ==========================================================================
@@ -73,7 +75,7 @@ body {
   inset: 0;
   z-index: 0;
   background-color: var(--bg-deep);
-  background-image: url(media/bg-wall.jpeg);
+  background-image: url(/media/bg-wall.jpeg);
   background-size: cover;
   background-position: center;
   background-repeat: no-repeat;
@@ -201,20 +203,9 @@ body {
    一层处理，属于「影像」那一侧。所以波纹应当在它上面。
 
    这里的 z-index 不接受小数，而 .stage--intro/--outro 已占 2，
-   所以薄纱取 3、波纹取 4。
-   画布本身只有 560×560 并随光标移动，由 JS 创建（reduced-motion / 触屏下
-   根本不创建），这里只放静态部分。
+   所以薄纱取 3。
+   （原鼠标波纹层已按需求移除。）
    ========================================================================== */
-
-.ripple {
-  position: fixed;
-  top: 0;
-  left: 0;
-  z-index: 4;
-  pointer-events: none;
-  /* transform 每帧由 JS 设为光标位置。带 transform 是安全的 ——
-     它是叶子节点，没有 fixed 后代，不触发「包含块」那个陷阱。 */
-}
 
 /* ==========================================================================
    3. 可读性薄纱 —— 压暗渐变，保留原样（用户决定）
@@ -233,6 +224,25 @@ body {
     rgba(20, 24, 20, 0)   62%
   );
 }
+/* 文件夹弹图打开时整屏压暗一档：主视频里的人物不再与弹图卡片争抢注意力，
+   弹图在 copy-layer(z-6) 不受影响。松手（收起/切节）即复原。
+   background-image 渐变是离散属性（transition 不插值），故压暗档做成覆盖层，
+   用 opacity 过渡获得真正的平滑渐隐。 */
+.scrim::after {
+  content: "";
+  position: absolute;
+  inset: 0;
+  background: linear-gradient(
+    90deg,
+    rgba(20, 24, 20, .9) 0%,
+    rgba(20, 24, 20, .78) 34%,
+    rgba(20, 24, 20, .62) 62%
+  );
+  opacity: 0;
+  transition: opacity .45s ease;
+  pointer-events: none;
+}
+.scrim.is-dim::after { opacity: 1; }
 
 
 /* ==========================================================================
@@ -321,7 +331,7 @@ body {
   /* 46vw → 48vw：让「可用行宽 / 字号」在缩放带与封顶带都恰为 5.333em。
      注意这**不会**改变文字的实际占宽 —— 最长一行只有 4.67em（约 0.42vw），
      远窄于容器；容器宽度在这里只作为换行约束起作用。 */
-  width: min(40rem, 48vw);
+  width: min(48rem, 48vw);
   opacity: 0;
   visibility: hidden;
   transition: opacity var(--fade) ease, visibility 0s linear var(--fade);
@@ -456,6 +466,7 @@ body {
 }
 
 .cta:hover .cta__icon { background: #2E362F; color: var(--ink); }
+.cta:active { transform: translateY(1px); }   /* 按压反馈：全站此前无 :active 态 */
 
 
 /* ==========================================================================
@@ -492,7 +503,13 @@ body {
   right: var(--gut);
   top: clamp(7rem, 26vh, 15rem);
   width: clamp(13rem, 19vw, 17rem);
-  text-shadow: var(--shadow-text);
+  /* intro 视频里人物脸部恰好在该块后方：基础 text-shadow 兜不住亮肤色背景，
+     换成「近距描边影 + 大范围软暗晕」双层，保持玻璃质感前提下保住可读性 */
+  text-shadow:
+    0 1px 3px rgba(20, 24, 20, .9),
+    0 1px 14px rgba(20, 24, 20, .75),
+    0 0 42px rgba(20, 24, 20, .65),
+    0 0 72px rgba(20, 24, 20, .5);
 }
 
 .hero__aside-title {
@@ -529,7 +546,12 @@ body {
 .hero__gaze {
   right: var(--gut);
   bottom: clamp(5.5rem, 12vh, 8.5rem);
-  text-shadow: var(--shadow-text);
+  /* 与 .hero__aside 同套暗晕：gaze 区落在人物下巴/衣领上方 */
+  text-shadow:
+    0 1px 3px rgba(20, 24, 20, .9),
+    0 1px 14px rgba(20, 24, 20, .75),
+    0 0 42px rgba(20, 24, 20, .65),
+    0 0 72px rgba(20, 24, 20, .5);
 }
 
 .hero__gaze-title {
@@ -620,13 +642,18 @@ body {
 }
 
 .folder__close {
-  position: absolute;
-  top: 0;
-  right: 0;
+  /* 相对视口定位：原先 absolute + right:-50% 以 .folder__head（max-width 46rem）
+     为参照，1440 视口下右边缘溢出 16px、768 视口下整颗按钮落在屏外。
+     .copy--panel 是 fixed inset:0 且无 transform，故此处 fixed 仍以视口为包含块。 */
+  position: fixed;
+  top: clamp(6.5rem, 14vh, 8.5rem);   /* 离开顶部眉题区，又不压住面板标题 */
+  right: var(--gut);                  /* 与面板左右安全边距对齐，任何视口都在屏内 */
+  z-index: 8;                         /* > .hud(7) > .copy-layer(6)，不被底部 UI 吃掉 */
   appearance: none;
   display: inline-flex;
   align-items: center;
-  gap: .6em;
+  gap: .10em;
+  min-height: 44px;                   /* 触摸舒适值（WCAG 2.2 AA 下限为 24px） */
   padding: .55em 1.1em;
   border: 0;
   border-radius: 999px;
@@ -651,7 +678,7 @@ body {
   position: relative;
   flex: 1 1 auto;
   width: 100%;
-  max-width: 58rem;
+  max-width: 80rem;
   min-height: clamp(17rem, 46vh, 30rem);
   margin-top: clamp(1.5rem, 4vh, 3rem);
   /* 这一块就是提示里的「空白栏」—— 点它收起整个面板。
@@ -928,6 +955,24 @@ body {
    响应式：≤ 720px 双栏堆叠为单列
    ========================================================================== */
 
+/* ── 窄桌面/平板（≤900px）：首屏右栏避让 ───────────────────────────────
+   竖屏比例下 intro 视频被 center-crop 成特写，右栏 AGENT MIND. 文字
+   直接压在人脸上不可读。此断点先隐藏右栏（720 断点原本也隐藏，这里提前）。 */
+@media (max-width: 900px) {
+  .hero__aside { display: none; }
+}
+
+/* 收起按钮在窄屏改为静态流：面板单列排布时它落在标题下方居中，
+   比浮在右上角更贴合「收起这个面板」的语义。
+   断点取 1024：768 这类窄桌面窗口同样需要静态化（此前只在 720 以下生效，
+   导致 768 视口下 fixed 定位的按钮虽然回到屏内、却与弹图空间脱节）。 */
+@media (max-width: 1024px) {
+  .folder__close {
+    position: static;
+    margin: 1rem auto 0;
+  }
+}
+
 @media (max-width: 720px) {
   :root { --gut: 7vw; }
 
@@ -1042,4 +1087,329 @@ body {
   }
 
   .stage__inner { transform: none; }      /* 去掉缩放，避免无谓的抖动感 */
+}
+
+
+
+/* ==========================================================================
+   React 版新增：作品文件夹真 DOM 卡片 / 作品预览框架 / 视差降级
+   （沿用既有变量 --ink / --ink-dim / --accent / --gut / --fade）
+   ========================================================================== */
+
+/* ── 文件夹 v2：PortFolio-bg 左下按钮 + beat-2 弹图（裁底部蓝带） ──
+   弹图开合曲线沿用原 .folder__page 的回弹（.34,1.56,.64,1），「弹」就是翻开动作 */
+
+/* PortFolio-bg 按钮：停靠面板左下侧（合着的橙色文件夹）；
+   弹图打开后隐藏（缩小淡出），合上时随面板一起回来 */
+.folder__openbtn {
+  position: absolute;
+  left: 0;
+  bottom: clamp(.8rem, 2.6vh, 1.8rem);
+  z-index: 5;
+  width: clamp(130px, 17vw, 300px);
+  margin: 0;
+  padding: 0;
+  border: 0;
+  background: none;
+  cursor: pointer;
+  pointer-events: auto;           /* .copy--panel 整体 none，可点元素单独开 */
+  transition: transform .25s ease, opacity .3s ease, visibility 0s linear .3s;
+}
+.folder__openbtn:hover { transform: scale(1.06) rotate(-1deg); }
+.folder.is-open .folder__openbtn {
+  opacity: 0;
+  visibility: hidden;
+  transform: scale(.7);
+  pointer-events: none;
+}
+.folder__openbtn:focus-visible { outline: 2px solid var(--accent); outline-offset: .4rem; }
+.folder__openbtn-art {
+  display: block;
+  width: 100%;
+  height: auto;
+  filter: drop-shadow(0 14px 28px rgba(20, 24, 20, .5));
+}
+
+/* beat-2 弹图：蓝色背景键控为透明（整图保留、底部不裁剪），
+   透明底卡片靠 drop-shadow 与景深分离，不再用矩形边框/底 */
+.folder__beat2 {
+  position: absolute;
+  inset: 0;
+  z-index: 4;
+  display: grid;
+  /* 居中偏上：主视频下人脸占据画面中上部，弹图居中会正压在脸上、
+     底部橙色文件夹又被挤到 HUD 提示线 —— 上移到面板上 2/3 区，让位给下方提示 */
+  place-items: start center;
+  padding-top: clamp(.75rem, 4vh, 2.25rem);
+  opacity: 0;
+  visibility: hidden;
+  transform: scale(.88);
+  transition: opacity .3s ease, transform .3s ease, visibility 0s linear .3s;
+}
+.folder.is-open .folder__beat2 {
+  opacity: 1;
+  visibility: visible;
+  transform: scale(1);
+  pointer-events: auto;
+  transition: opacity .28s ease,
+              transform .46s cubic-bezier(.34, 1.56, .64, 1),
+              visibility 0s;
+}
+.folder__beat2-frame {
+  width: min(1400px, 120%);  /* 弹图再放大 20%，页面中心绝对主角（可略出 deck） */
+}
+.folder__beat2-art {
+  display: block;
+  width: 100%;
+  height: auto;
+  /* 弹图整体不越出视口：此前 1440×900 下底边落到 1016px，
+     压住 HUD 且橙色文件夹标题带被视口腰斩。按高度反算宽度等比缩放。 */
+  max-height: calc(100vh - 21rem);
+  max-width: min(1400px, 120%);
+  width: auto;
+  /* 底部阴影渐隐过渡：消掉透明 PNG 的硬切面，与墙面自然融合。
+     渐隐带收窄到 8%（原 16% 会吃掉橙色文件夹标题带的大部分，看着像「融化」） */
+  -webkit-mask-image: linear-gradient(to top, transparent 0%, #000 8%);
+  mask-image: linear-gradient(to top, transparent 0%, #000 8%);
+}
+
+/* beat-1 拆层：净墙面（bg-wall）全屏不动 + 人物独立元素。
+   文件夹打开时只有人物向右下缩放，背景不缩（此前整体缩放有硬接缝）。 */
+.backdrop__person {
+  position: absolute;
+  right: 0;
+  bottom: 0;
+  width: 44%;                     /* 与 beat-1 中人物的原位置/体量一致 */
+  transform-origin: right bottom;
+  transition: transform .6s ease;
+  /* 顶边与左边渐隐，与净墙面无缝融合（裁切图内嵌墙面与 bg-wall 同源） */
+  -webkit-mask-image: linear-gradient(to top, #000 60%, transparent 96%),
+                      linear-gradient(to left, #000 62%, transparent 96%);
+  mask-image: linear-gradient(to top, #000 60%, transparent 96%),
+              linear-gradient(to left, #000 62%, transparent 96%);
+  -webkit-mask-composite: source-in;
+  mask-composite: intersect;
+}
+.backdrop__scene.is-shrunk .backdrop__person {
+  transform: scale(.55);
+}
+
+/* ── 作品预览：iframe 实时框架 + 三卡片 ───────────────────────────── */
+.copy--preview {
+  display: flex;
+  flex-direction: column;
+  align-items: flex-start;
+  max-width: 78vw;
+  /* 本节内容（文案 + 预览框 + 三卡片）高于视口是常态：容器必须能内部滚动，
+     否则后两张卡片落在视口之下且永远不可达（.copy-layer 是 fixed inset:0 无滚动）。
+     上限 = 视口 − 本节上边距 − 底部 HUD 安全区。 */
+  max-height: calc(100vh - clamp(6rem, 15vh, 11rem) - 7rem);
+  overflow-y: auto;
+  overscroll-behavior: contain;
+  padding-right: .5rem;
+  /* 滚动条隐藏：外露的滚动条/轨道在编辑排版里很突兀（视觉审查反馈）。
+     滚动能力保留 —— 滚轮/键盘/触摸仍可到达三张卡片。 */
+  scrollbar-width: none;
+  -ms-overflow-style: none;
+}
+.copy--preview::-webkit-scrollbar { display: none; }
+.copy--preview .copy__title { font-size: 2.6rem; }
+
+.preview-frame {
+  /* 容器查询锚点：iframe 的 scale 用 100cqw 自适应 frame 宽度 */
+  container-type: inline-size;
+  position: relative;
+  width: min(800px, 64vw);
+  /* 16:9 与内部 1280×720 同比 —— scale 后 iframe 视觉与 frame 严丝合缝，
+     不再需要父级裁剪（裁剪在 transform 之前发生，会吃掉 25% 画面） */
+  aspect-ratio: 16 / 9;
+  margin-top: 1.2rem;
+  border: 1px solid rgba(237, 231, 220, .22);
+  background: rgba(20, 24, 20, .6);
+  overflow: hidden;
+  flex: 0 0 auto;
+}
+.preview-frame__view {
+  /* iframe 以桌面视口 1280×720 渲染（app 走 lg 断点桌面布局），
+     再按 frame 实际宽度等比缩放：100cqw = frame 宽，/1280px = scale。
+     视觉与 frame 同尺寸，无溢出无留白，内部内容自适应外层。 */
+  position: absolute;
+  top: 0;
+  left: 0;
+  width: 1280px;
+  height: 720px;
+  transform: scale(calc(100cqw / 1280px));
+  transform-origin: top left;
+  border: 0;
+  background: #fff;
+}
+.preview-frame__ghost {
+  position: absolute;
+  inset: 0;
+  width: 100%;
+  height: 100%;
+  object-fit: cover;
+  opacity: .45;
+  filter: saturate(.7);
+}
+.preview-frame__enter {
+  position: absolute;
+  inset: 0;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  width: 100%;
+  border: 0;
+  cursor: pointer;
+  background: rgba(20, 24, 20, .35);
+  transition: background var(--fade);
+  pointer-events: auto;           /* .copy-layer 整体 none，可点元素单独开 */
+}
+/* 主 CTA 做成实心 pill：此前裸文本压在人像底图上对比度不足 */
+.preview-frame__enter-pill {
+  padding: .85em 1.9em;
+  border: 1px solid rgba(237, 231, 220, .35);
+  border-radius: 999px;
+  background: rgba(20, 24, 20, .78);
+  font-size: .82rem;
+  letter-spacing: .16em;
+  color: var(--ink);
+  transition: border-color var(--fade), background var(--fade);
+}
+.preview-frame__enter:hover .preview-frame__enter-pill {
+  border-color: var(--accent);
+  background: rgba(20, 24, 20, .92);
+}
+.preview-frame__enter:active .preview-frame__enter-pill {
+  transform: translateY(1px);
+}
+.preview-frame.is-live .preview-frame__view { pointer-events: auto; }
+.preview-frame.is-live::after {
+  content: "LIVE";
+  position: absolute;
+  top: .6rem;
+  right: .7rem;
+  z-index: 2;
+  font-size: 10px;
+  letter-spacing: .2em;
+  color: var(--accent);
+}
+
+.preview-cards {
+  display: flex;
+  gap: 1rem;
+  margin-top: 1.2rem;
+  flex: 0 0 auto;   /* 不参与压缩：卡片是转化入口，宁可让容器滚也不能被压扁 */
+}
+.preview-card {
+  flex: 0 1 220px;
+  display: flex;
+  flex-direction: column;
+  padding: .9rem 1rem 1rem;
+  border: 1px solid rgba(237, 231, 220, .16);
+  color: var(--ink-dim);
+  text-decoration: none;
+  transition: border-color var(--fade), color var(--fade), transform var(--fade);
+}
+.preview-card.is-enabled {
+  cursor: pointer;
+  color: var(--ink);
+  pointer-events: auto;           /* .copy-layer 整体 none，可点卡片单独开 */
+}
+.preview-card.is-enabled:hover {
+  border-color: var(--accent);
+  transform: translateY(-2px);
+}
+.preview-card[aria-disabled="true"] { opacity: .55; cursor: not-allowed; }
+.preview-card__art {
+  width: 100%;
+  height: auto;
+  border-radius: 2px;
+}
+.preview-card__title {
+  margin-top: .7rem;
+  font-family: var(--font-display);
+  font-size: 1.05rem;
+  letter-spacing: .04em;
+}
+.preview-card__desc {
+  margin-top: .35rem;
+  font-size: .74rem;
+  line-height: 1.6;
+}
+
+@media (max-width: 900px) {
+  .preview-frame { width: 84vw; }
+  .preview-cards { flex-wrap: wrap; }
+  .folder__beat2-frame { width: 92%; }
+  .folder__openbtn { width: clamp(110px, 24vw, 170px); }
+}
+
+/* ── 视差降级：无 main.mp4 时 JS 写入 --par（该节内进度 0..1） ─────── */
+.backdrop__scene.is-active:not([data-drop]) {
+  transform: scale(calc(1 + var(--par, 0) * .035)) translateY(calc(var(--par, 0) * -1.2%));
+}
+
+/* ── 级联下坠元素（无限可能节）：图片元素错落跌入 ──
+   与 .backdrop 同层（fixed 全屏）、DOM 序在其后 → 盖在 scene 之上、仍在影像层之下 */
+.fall {
+  position: fixed;
+  inset: 0;
+  z-index: 0;
+  overflow: hidden;            /* 裁掉视口上方未入场的元素 */
+  pointer-events: none;
+  opacity: 0;
+  visibility: hidden;
+  transition: opacity var(--fade) ease, visibility 0s linear var(--fade);
+}
+.fall.is-active { opacity: 1; visibility: visible; }
+.fall__item {
+  position: absolute;
+  height: auto;
+  opacity: .82;
+  filter: drop-shadow(0 18px 32px rgba(20, 24, 20, .5));
+  will-change: transform;
+  transform: translate3d(0, -135vh, 0);  /* JS 接管前整体在视口上方 */
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .fall__item { transform: none; }        /* 降级：直接呈现落定态 */
+}
+
+/* 实时交互开启后的「全屏打开」浮层入口 */
+.preview-frame__open {
+  /* 移到右下角：左上角此前正压在 app 自己的页头（内知 · KnowledgeQA）上 */
+  position: absolute;
+  bottom: .6rem;
+  right: .7rem;
+  z-index: 2;
+  padding: .3rem .7rem;
+  border: 1px solid rgba(237, 231, 220, .35);
+  font-size: 11px;
+  letter-spacing: .14em;
+  color: var(--ink);
+  text-decoration: none;
+  background: rgba(20, 24, 20, .6);
+  pointer-events: auto;
+  transition: border-color var(--fade);
+}
+.preview-frame__open:hover { border-color: var(--accent); }
+
+
+/* ==========================================================================
+   焦点可见性（WCAG 2.4.7 / 2.2 Focus Not Obscured）
+   此前只有 .folder__cover / .folder__page / .folder__openbtn 定义了焦点环，
+   键盘用户在顶栏导航、HUD 暂停、CTA、收起按钮、预览框入口与卡片上
+   看不到焦点位置。这里补齐其余可交互控件，样式与既有三处保持一致。
+   ========================================================================== */
+.topbar__tab:focus-visible,
+.hud__pause:focus-visible,
+.cta:focus-visible,
+.folder__close:focus-visible,
+.preview-frame__enter:focus-visible,
+.preview-frame__open:focus-visible,
+.preview-card.is-enabled:focus-visible {
+  outline: 2px solid var(--accent);
+  outline-offset: .35rem;
+  border-radius: 2px;
 }

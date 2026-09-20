@@ -12,12 +12,12 @@ export function IcpFooter() {
         href="https://beian.miit.gov.cn/"
         target="_blank"
         rel="noreferrer"
-        className="pointer-events-auto text-[11px] text-slate-500 transition-colors hover:text-brand-light"
+        className="pointer-events-auto text-[12px] text-slate-400 transition-colors hover:text-brand-light"
       >
         {ICP_NUMBER}
       </a>
       <span
-        className="pointer-events-auto text-[11px] text-slate-500 transition-colors hover:text-brand-light ml-5"
+        className="pointer-events-auto text-[12px] text-slate-400 transition-colors hover:text-brand-light ml-5"
       >
         {GA_NUMBER}
       </span>

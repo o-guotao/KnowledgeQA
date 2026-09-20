@@ -102,7 +102,7 @@ export function MessageItem({ message, streaming, onCitationClick, onRetry, onFe
                 type="button"
                 onClick={() => onCitationClick?.(c.chunk_id)}
                 title={c.document_name}
-                className="rounded-md bg-brand/15 px-1.5 py-0.5 text-xs font-medium text-brand-light transition-colors hover:bg-brand hover:text-white cursor-pointer"
+                className="rounded-md bg-brand/15 px-1.5 py-1 text-xs font-medium text-brand-light transition-colors hover:bg-brand hover:text-white cursor-pointer"
               >
                 [{i + 1}]
               </button>
@@ -115,7 +115,7 @@ export function MessageItem({ message, streaming, onCitationClick, onRetry, onFe
                   title="回答有用"
                   onClick={() => submitFeedback("up")}
                   className={cn(
-                    "rounded-md p-1 transition-colors cursor-pointer",
+                    "rounded-md p-1.5 transition-colors cursor-pointer",
                     message.feedback === "up"
                       ? "bg-green-100 text-green-600"
                       : "text-slate-400 hover:bg-slate-100 hover:text-green-600",
@@ -129,7 +129,7 @@ export function MessageItem({ message, streaming, onCitationClick, onRetry, onFe
                   title="回答无用"
                   onClick={() => submitFeedback("down")}
                   className={cn(
-                    "rounded-md p-1 transition-colors cursor-pointer",
+                    "rounded-md p-1.5 transition-colors cursor-pointer",
                     message.feedback === "down"
                       ? "bg-red-100 text-red-600"
                       : "text-slate-400 hover:bg-slate-100 hover:text-red-600",

@@ -22,7 +22,7 @@ export function ChatInput({ streaming, disabled, onSend, onStop }: ChatInputProp
   };
 
   return (
-    <div className="border-t border-theme-line bg-theme-deep/80 px-4 py-4 backdrop-blur-xl sm:px-6">
+    <div className="border-t border-theme-line bg-theme-deep/80 px-4 pt-4 pb-9 backdrop-blur-xl sm:px-6">
       <div className="mx-auto max-w-3xl">
         <div className="flex items-end gap-2 rounded-2xl border border-theme-line bg-theme-input p-2 text-theme-text shadow-card transition-all focus-within:border-brand/50 focus-within:shadow-pop">
           <Textarea

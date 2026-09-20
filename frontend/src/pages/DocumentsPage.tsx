@@ -19,6 +19,7 @@ import { ThemeToggle } from "../components/ThemeToggle";
 import { Badge } from "../components/ui/badge";
 import { Button } from "../components/ui/button";
 import { Card, CardContent } from "../components/ui/card";
+import { Input } from "../components/ui/input";
 import { Pagination } from "../components/ui/pagination";
 import { SearchInput } from "../components/ui/search-input";
 import { usePaginatedQuery } from "../hooks/usePaginatedQuery";
@@ -109,6 +110,13 @@ export function DocumentsPage() {
   const [filterFolder, setFilterFolder] = useState<string | null>(null);
   const [folders, setFolders] = useState<string[]>([]);
   const [stats, setStats] = useState<DocumentStats | null>(null);
+  // 行内操作错误（共享/重切/更新/删除失败），替代此前的 window.alert —— 与站内提示体系一致
+  const [actionError, setActionError] = useState<string | null>(null);
+  useEffect(() => {
+    if (!actionError) return;
+    const t = setTimeout(() => setActionError(null), 6000);
+    return () => clearTimeout(t);
+  }, [actionError]);
 
   // 我的文档：服务端分页 + 关键词（文件名/标签）；folder 过滤走 extraParams（变化时回第 1 页）
   const docsQuery = usePaginatedQuery<KnowledgeDocument>(
@@ -156,13 +164,14 @@ export function DocumentsPage() {
   /** 共享/取消共享到团队空间（owner 或 admin） */
   const toggleShare = async (doc: KnowledgeDocument) => {
     setShareTogglingId(doc.id);
+    setActionError(null);
     try {
       const next = doc.visibility === "team" ? "private" : "team";
       await patch(`/documents/${doc.id}`, { visibility: next }, DocumentSchema);
       refresh();
       if (tab === "team") refreshTeam();
     } catch (err) {
-      alert(err instanceof Error ? err.message : "操作失败");
+      setActionError(err instanceof Error ? err.message : "操作失败");
     } finally {
       setShareTogglingId(null);
     }
@@ -264,11 +273,12 @@ export function DocumentsPage() {
   /** 一键刷新：按当前配置对已存储内容重新切分（stale / failed 文档）。 */
   const reingest = async (doc: KnowledgeDocument) => {
     setReingestingId(doc.id);
+    setActionError(null);
     try {
       await post(`/documents/${doc.id}/reingest`, {}, DocumentSchema);
       refresh();
     } catch (err) {
-      alert(err instanceof Error ? err.message : "重新切分失败");
+      setActionError(err instanceof Error ? err.message : "重新切分失败");
     } finally {
       setReingestingId(null);
     }
@@ -288,10 +298,10 @@ export function DocumentsPage() {
         form,
         ContentUpdateResultSchema,
       );
-      if (!result.updated) alert("内容与当前版本相同，无需更新");
+      if (!result.updated) setActionError("内容与当前版本相同，无需更新");
       refresh();
     } catch (err) {
-      alert(err instanceof Error ? err.message : "更新内容失败");
+      setActionError(err instanceof Error ? err.message : "更新内容失败");
     } finally {
       setUpdatingContent(false);
       setUpdateTarget(null);
@@ -319,7 +329,7 @@ export function DocumentsPage() {
       });
       refresh();
     } catch (err) {
-      alert(err instanceof Error ? err.message : "删除失败");
+      setActionError(err instanceof Error ? err.message : "删除失败");
     } finally {
       setDeletingId(null);
       setSingleConfirm(null);
@@ -356,11 +366,11 @@ export function DocumentsPage() {
     setSelected(allSelected ? new Set() : new Set(docs.map((d) => d.id)));
 
   return (
-    <main className="min-h-screen bg-gradient-to-b from-theme-bg via-theme-bg to-theme-deep px-4 py-8 sm:px-8">
+    <main className="min-h-screen bg-gradient-to-b from-theme-bg via-theme-bg to-theme-deep px-4 pt-8 pb-14 sm:px-8">
       <div className="mx-auto max-w-5xl space-y-6">
         <header className="flex items-center justify-between gap-3">
           <div className="flex items-center gap-3">
-            <Button variant="ghost" size="icon" aria-label="返回问答" onClick={() => navigate("/")}>
+            <Button variant="ghost" size="icon" aria-label="返回问答" onClick={() => navigate("/app")}>
               <ArrowLeft size={18} />
             </Button>
             <div>
@@ -413,6 +423,15 @@ export function DocumentsPage() {
           </div>
         </header>
 
+        {/* 行内操作错误（原 window.alert）：6 秒自动消失 */}
+        {actionError && (
+          <div role="alert" className="flex items-start justify-between gap-3 rounded-lg border border-red-500/30 bg-red-500/10 px-4 py-2.5 text-sm text-red-400">
+            <span>{actionError}</span>
+            <button type="button" aria-label="关闭错误提示" className="cursor-pointer text-red-400/70 hover:text-red-400" onClick={() => setActionError(null)}>
+              <X size={14} />
+            </button>
+          </div>
+        )}
         {/* 空间切换：我的文档 | 团队空间 */}
         <div className="flex gap-1 border-b border-theme-line">
           {([["mine", "我的文档"], ["team", "团队空间"]] as const).map(([key, label]) => (
@@ -450,20 +469,20 @@ export function DocumentsPage() {
         <div className="flex flex-wrap items-center gap-3 rounded-lg border border-theme-line bg-theme-card px-4 py-3 text-sm">
           <label className="flex items-center gap-2 text-theme-sub">
             文件夹
-            <input
+            <Input
               value={uploadFolder}
               onChange={(e) => setUploadFolder(e.target.value)}
               placeholder="如：制度/人事"
-              className="w-40 rounded-md border border-theme-line bg-theme-input px-2 py-1 text-sm text-theme-text placeholder:text-theme-sub focus:border-brand focus:outline-none"
+              className="h-8 w-40"
             />
           </label>
           <label className="flex items-center gap-2 text-theme-sub">
             标签
-            <input
+            <Input
               value={uploadTags}
               onChange={(e) => setUploadTags(e.target.value)}
               placeholder="逗号分隔，如：报销,流程"
-              className="w-56 rounded-md border border-theme-line bg-theme-input px-2 py-1 text-sm text-theme-text placeholder:text-theme-sub focus:border-brand focus:outline-none"
+              className="h-8 w-56"
             />
           </label>
           <label className="flex cursor-pointer items-center gap-2 text-theme-sub">
@@ -471,7 +490,7 @@ export function DocumentsPage() {
               type="checkbox"
               checked={shareTeam}
               onChange={(e) => setShareTeam(e.target.checked)}
-              className="accent-brand"
+              className="h-[18px] w-[18px] accent-brand"
             />
             <Users size={14} />
             上传到团队空间（全员可检索）
@@ -590,7 +609,7 @@ export function DocumentsPage() {
         {docs.length > 0 && (
           <div className="flex items-center gap-3 text-sm">
             <label className="flex cursor-pointer items-center gap-2 text-theme-sub">
-              <input type="checkbox" checked={allSelected} onChange={toggleSelectAll} className="accent-brand" aria-label="全选" />
+              <input type="checkbox" checked={allSelected} onChange={toggleSelectAll} className="h-[18px] w-[18px] accent-brand" aria-label="全选" />
               全选
             </label>
             {selected.size > 0 && (
@@ -749,7 +768,7 @@ export function DocumentsPage() {
                       checked={selected.has(d.id)}
                       onChange={() => toggleSelect(d.id)}
                       aria-label={`选择 ${d.filename}`}
-                      className="shrink-0 self-start accent-brand sm:self-center"
+                      className="h-[18px] w-[18px] shrink-0 self-start accent-brand sm:self-center"
                     />
                     <div className="min-w-0">
                       <div className="flex flex-wrap items-center gap-2">

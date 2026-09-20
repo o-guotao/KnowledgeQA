@@ -87,7 +87,7 @@ export function UserMenu({ user, onLogout, quotaRefreshKey }: UserMenuProps) {
             type="button"
             onClick={() => {
               setOpen(false);
-              navigate("/settings/models");
+              navigate("/app/settings/models");
             }}
             className="mt-1 flex w-full cursor-pointer items-center gap-2 rounded-lg px-2 py-2 text-sm text-theme-text transition-colors hover:bg-white/5"
           >

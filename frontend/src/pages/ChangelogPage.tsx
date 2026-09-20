@@ -1,6 +1,8 @@
 import { ArrowLeft, History, Tag } from "lucide-react";
 import { useCallback, useEffect, useState } from "react";
 import { useNavigate } from "react-router-dom";
+import ReactMarkdown from "react-markdown";
+import remarkGfm from "remark-gfm";
 
 import { get, withQuery } from "../api/client";
 import {
@@ -39,11 +41,11 @@ export function ChangelogPage() {
   }, []);
 
   return (
-    <main className="min-h-screen bg-gradient-to-b from-theme-bg via-theme-bg to-theme-deep px-4 py-8 sm:px-8">
+    <main className="min-h-screen bg-gradient-to-b from-theme-bg via-theme-bg to-theme-deep px-4 pt-8 pb-14 sm:px-8">
       <div className="mx-auto max-w-3xl space-y-6">
         <header className="flex items-center justify-between gap-3">
           <div className="flex items-center gap-3">
-            <Button variant="ghost" size="icon" aria-label="返回问答" onClick={() => navigate("/")}>
+            <Button variant="ghost" size="icon" aria-label="返回问答" onClick={() => navigate("/app")}>
               <ArrowLeft size={18} />
             </Button>
             <div>
@@ -71,7 +73,22 @@ export function ChangelogPage() {
 
         {error && <p className="text-sm text-red-400">{error}</p>}
 
-        {!error && entries.length === 0 && (
+        {/* 加载骨架：首屏加载期间不再直接落「暂无迭代记录」空态 */}
+        {!error && entriesQuery.loading && entries.length === 0 && (
+          <div className="space-y-4">
+            {[0, 1, 2].map((i) => (
+              <Card key={i}>
+                <CardContent className="space-y-3 py-5">
+                  <div className="h-5 w-24 animate-pulse rounded bg-theme-input" />
+                  <div className="h-3.5 w-3/4 animate-pulse rounded bg-theme-input" />
+                  <div className="h-3.5 w-1/2 animate-pulse rounded bg-theme-input" />
+                </CardContent>
+              </Card>
+            ))}
+          </div>
+        )}
+
+        {!error && !entriesQuery.loading && entries.length === 0 && (
           <div className="flex flex-col items-center rounded-2xl border border-dashed border-theme-line bg-theme-card/60 px-6 py-16 text-center">
             <History size={22} className="text-theme-sub" />
             <p className="mt-4 text-sm text-theme-sub">
@@ -98,7 +115,16 @@ export function ChangelogPage() {
                   <p className="text-sm font-medium text-brand-light">{g.title}</p>
                   <ul className="mt-2 list-disc space-y-1.5 pl-5 text-sm leading-6 text-theme-sub">
                     {g.items.map((item, i) => (
-                      <li key={i}>{item}</li>
+                      /* 条目来自 CHANGELOG.md，含 **加粗** 等行内 Markdown：
+                         此前原样输出导致星号裸露在界面上。p 映射为 span 保持列表行内排版。 */
+                      <li key={i}>
+                        <ReactMarkdown
+                          remarkPlugins={[remarkGfm]}
+                          components={{ p: ({ children }) => <span>{children}</span> }}
+                        >
+                          {item}
+                        </ReactMarkdown>
+                      </li>
                     ))}
                   </ul>
                 </div>

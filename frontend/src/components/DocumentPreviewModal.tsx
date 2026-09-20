@@ -230,6 +230,15 @@ export function DocumentPreviewModal({ document, onClose }: DocumentPreviewModal
     };
   }, [document, isPdfDoc]);
 
+  // ESC 关闭：与 ui/Dialog 行为对齐（此前只有遮罩点击，键盘用户关不掉）
+  useEffect(() => {
+    const onKey = (e: KeyboardEvent) => {
+      if (e.key === "Escape") onClose();
+    };
+    window.addEventListener("keydown", onKey);
+    return () => window.removeEventListener("keydown", onKey);
+  }, [onClose]);
+
   // PDF 当前页渲染到 canvas
   useEffect(() => {
     if (!isPdfDoc || !numPages) return;
@@ -342,7 +351,8 @@ export function DocumentPreviewModal({ document, onClose }: DocumentPreviewModal
               {meta.label}
             </span>
           </div>
-          <Button variant="ghost" size="icon" aria-label="关闭预览" onClick={onClose} className="cursor-pointer">
+          {/* 容器是白底：ghost 变体取 theme-text（深色主题下近白）会看不清，强制深色图标 */}
+          <Button variant="ghost" size="icon" aria-label="关闭预览" onClick={onClose} className="cursor-pointer text-slate-600 hover:bg-slate-100 hover:text-slate-900">
             <X size={18} />
           </Button>
         </div>
@@ -376,12 +386,22 @@ export function DocumentPreviewModal({ document, onClose }: DocumentPreviewModal
                   src={imageUrl}
                   alt={document.filename}
                   className="max-h-full max-w-full rounded shadow cursor-zoom-in object-contain"
+                  tabIndex={0}
+                  role="button"
+                  aria-label="放大或还原图片"
                   onClick={(e) => {
                     const el = e.currentTarget;
                     el.classList.toggle("max-h-full");
                     el.classList.toggle("max-w-full");
                     el.classList.toggle("cursor-zoom-in");
                     el.classList.toggle("cursor-zoom-out");
+                  }}
+                  onKeyDown={(e) => {
+                    // 键盘用户也要能放大/还原（img 原本不可聚焦）
+                    if (e.key === "Enter" || e.key === " ") {
+                      e.preventDefault();
+                      e.currentTarget.click();
+                    }
                   }}
                 />
               )}
@@ -446,7 +466,7 @@ export function DocumentPreviewModal({ document, onClose }: DocumentPreviewModal
               aria-label="上一页"
               disabled={pageNo <= 1}
               onClick={() => goPage(pageNo - 1)}
-              className="cursor-pointer"
+              className="cursor-pointer text-slate-600 hover:bg-slate-100 hover:text-slate-900"
             >
               <ChevronLeft size={18} />
             </Button>
@@ -459,7 +479,7 @@ export function DocumentPreviewModal({ document, onClose }: DocumentPreviewModal
               aria-label="下一页"
               disabled={pageNo >= numPages}
               onClick={() => goPage(pageNo + 1)}
-              className="cursor-pointer"
+              className="cursor-pointer text-slate-600 hover:bg-slate-100 hover:text-slate-900"
             >
               <ChevronRight size={18} />
             </Button>

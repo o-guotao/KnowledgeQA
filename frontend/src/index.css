@@ -40,6 +40,14 @@
   ::selection {
     @apply bg-brand/15 text-ink;
   }
+  /* 键盘焦点全局兜底：裸 <button>/<a>/原生控件此前依赖 UA 默认（auto 1px），
+     与 ui 组件的 2px 品牌环不一致且近乎不可见。
+     :where() 零特异性 + 处于 base 层 → ui/Button 自己的
+     focus-visible:outline-none + ring 仍可覆盖，不会出现双环。 */
+  :where(a, button, [role="button"], [role="tab"], [role="menuitem"], input, select, textarea, summary):focus-visible {
+    outline: 2px solid rgb(var(--brand) / 0.65);
+    outline-offset: 2px;
+  }
 }
 
 @layer components {
@@ -128,6 +136,23 @@ html.light .hover\:bg-slate-100:hover {
 }
 html.light .hover\:bg-slate-200:hover {
   background-color: #e5e7eb;
+}
+/* 补齐首批审查发现的兜底缺口：divide-slate-100（队列分隔线）、
+   bg-black/40（工具确认参数区）、bg-slate-950 系（遮罩）、hover:bg-indigo-100（文件夹 chip） */
+html.light .divide-slate-100 > :not([hidden]) ~ :not([hidden]) {
+  border-color: #e5e7eb;
+}
+html.light .bg-black\/40 {
+  background-color: rgb(17 24 39 / 0.35);
+}
+html.light .bg-slate-950\/40 {
+  background-color: rgb(17 24 39 / 0.35);
+}
+html.light .bg-slate-950\/50 {
+  background-color: rgb(17 24 39 / 0.4);
+}
+html.light .hover\:bg-indigo-100:hover {
+  background-color: #e0e7ff;
 }
 /* 滚动条与 Markdown 代码块的浅色适配 */
 html.light .scrollbar-thin::-webkit-scrollbar-thumb {

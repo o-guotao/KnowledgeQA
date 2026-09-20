@@ -40,7 +40,7 @@ export function SearchInput({
           type="button"
           aria-label="清除搜索"
           onClick={() => onChange("")}
-          className="absolute right-2 top-1/2 -translate-y-1/2 cursor-pointer rounded p-1 text-theme-sub transition-colors hover:bg-white/10 hover:text-theme-text"
+          className="absolute right-1.5 top-1/2 -translate-y-1/2 cursor-pointer rounded p-1.5 text-theme-sub transition-colors hover:bg-white/10 hover:text-theme-text"
         >
           <X size={14} />
         </button>

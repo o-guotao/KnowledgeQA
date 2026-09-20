@@ -11,6 +11,7 @@ import {
   type ModelConfig,
 } from "../api/schemas";
 import { useAuth } from "../auth/AuthContext";
+import { ConfirmDialog } from "../components/ConfirmDialog";
 import { ThemeToggle } from "../components/ThemeToggle";
 import { Badge } from "../components/ui/badge";
 import { Button } from "../components/ui/button";
@@ -56,6 +57,9 @@ export function ModelSettingsPage() {
   const [error, setError] = useState<string | null>(null);
   const [pwd, setPwd] = useState({ current: "", next: "", confirm: "" });
   const [pwdSaving, setPwdSaving] = useState(false);
+  // 删除确认走统一 ConfirmDialog（替代 window.confirm，与其余页面一致）
+  const [removeTarget, setRemoveTarget] = useState<{ id: string; name: string } | null>(null);
+  const [removing, setRemoving] = useState(false);
 
   const configsQuery = usePaginatedQuery<ModelConfig>(
     useCallback((params) => get(withQuery("/model-configs", params), pageSchema(ModelConfigSchema)), []),
@@ -125,23 +129,24 @@ export function ModelSettingsPage() {
     catch (err) { setError(err instanceof Error ? err.message : "测试失败"); }
   };
   const remove = async (id: string) => {
-    if (!window.confirm("删除该模型配置？此操作无法恢复。")) return;
+    setRemoving(true);
     try { await del(`/model-configs/${id}`); setMessage("模型配置已删除"); refresh(); }
     catch (err) { setError(err instanceof Error ? err.message : "删除失败"); }
+    finally { setRemoving(false); setRemoveTarget(null); }
   };
 
   return (
-    <main className="min-h-screen bg-gradient-to-b from-theme-bg via-theme-bg to-theme-deep px-4 py-8 sm:px-8">
+    <main className="min-h-screen bg-gradient-to-b from-theme-bg via-theme-bg to-theme-deep px-4 pt-8 pb-14 sm:px-8">
       <div className="mx-auto max-w-5xl space-y-6">
         <header className="flex items-center justify-between gap-3">
           <div className="flex items-center gap-3">
-            <Button variant="ghost" size="icon" aria-label="返回问答" onClick={() => navigate("/")}><ArrowLeft size={18} /></Button>
+            <Button variant="ghost" size="icon" aria-label="返回问答" onClick={() => navigate("/app")}><ArrowLeft size={18} /></Button>
             <div><p className="text-sm font-medium text-brand">个人设置</p><h1 className="text-2xl font-semibold tracking-tight text-theme-text">模型配置</h1></div>
           </div>
           <ThemeToggle />
         </header>
         <p className="max-w-3xl text-sm leading-6 text-theme-sub">每个配置使用 OpenAI Chat Completions 兼容接口。API Key 仅在保存时提交、由服务端加密，之后只显示脱敏值。</p>
-        {(message || error) && <div role="status" className={`rounded-lg border px-4 py-3 text-sm ${error ? "border-red-200 bg-red-50 text-red-700" : "border-emerald-200 bg-emerald-50 text-emerald-700"}`}>{error ?? message}</div>}
+        {(message || error) && <div role="status" className={`rounded-lg border px-4 py-3 text-sm ${error ? "border-red-500/30 bg-red-500/10 text-red-400" : "border-emerald-500/30 bg-emerald-500/10 text-emerald-400"}`}>{error ?? message}</div>}
 
         <Card>
           <CardHeader><CardTitle className="flex items-center gap-2"><User size={18} />账号信息</CardTitle></CardHeader>
@@ -201,12 +206,22 @@ export function ModelSettingsPage() {
           {configs.length === 0 ? <Card><CardContent className="flex flex-col items-center gap-2 py-10 text-center"><Settings2 size={22} className="text-theme-sub" /><p className="text-sm text-theme-sub">{configsQuery.query !== "" ? `没有匹配「${configsQuery.query}」的配置` : "尚未配置模型。添加并保存后即可用于问答。"}</p></CardContent></Card> : configs.map((config) => (
             <Card key={config.id} className={config.is_active ? "border-brand/40 ring-1 ring-brand/10" : ""}><CardContent className="flex flex-col gap-4 py-5 sm:flex-row sm:items-center sm:justify-between">
               <div><div className="flex items-center gap-2 font-medium text-theme-text">{config.name}{config.is_active && <span className="inline-flex items-center gap-1 rounded-full bg-brand/10 px-2 py-0.5 text-xs text-brand"><CheckCircle2 size={12} />当前使用</span>}</div><p className="mt-1 text-sm text-theme-sub">{config.model_name} · {config.base_url}</p>{(config.temperature !== null || config.top_p !== null || config.max_tokens !== null) && <p className="mt-1 text-xs text-slate-400">温度 {config.temperature ?? "默认"} · top_p {config.top_p ?? "默认"} · max_tokens {config.max_tokens ?? "默认"}</p>}<p className="mt-1 font-mono text-xs text-slate-400">{config.api_key_masked}</p></div>
-              <div className="flex flex-wrap gap-2"><Button size="sm" variant="outline" onClick={() => void test(config.id)}><Wifi size={14} />测试</Button><Button size="sm" variant="outline" onClick={() => edit(config)}><Pencil size={14} />编辑</Button>{!config.is_active && <Button size="sm" onClick={() => void activate(config.id)}>设为当前</Button>}<Button size="sm" variant="ghost" className="text-red-600 hover:bg-red-50 hover:text-red-700" aria-label={`删除 ${config.name}`} onClick={() => void remove(config.id)}><Trash2 size={15} /></Button></div>
+              <div className="flex flex-wrap gap-2"><Button size="sm" variant="outline" onClick={() => void test(config.id)}><Wifi size={14} />测试</Button><Button size="sm" variant="outline" onClick={() => edit(config)}><Pencil size={14} />编辑</Button>{!config.is_active && <Button size="sm" onClick={() => void activate(config.id)}>设为当前</Button>}<Button size="sm" variant="ghost" className="text-red-400 hover:bg-red-500/10 hover:text-red-300" aria-label={`删除 ${config.name}`} onClick={() => setRemoveTarget({ id: config.id, name: config.name })}><Trash2 size={15} /></Button></div>
             </CardContent></Card>
           ))}
           <Pagination page={configsQuery.page} pages={configsQuery.pages} total={configsQuery.total} onPageChange={configsQuery.setPage} disabled={configsQuery.loading} />
         </section>
       </div>
+      <ConfirmDialog
+        open={removeTarget !== null}
+        title="删除模型配置"
+        description={removeTarget ? `删除「${removeTarget.name}」？此操作无法恢复。` : ""}
+        confirmText="删除"
+        destructive
+        loading={removing}
+        onConfirm={() => removeTarget && void remove(removeTarget.id)}
+        onCancel={() => setRemoveTarget(null)}
+      />
     </main>
   );
 }

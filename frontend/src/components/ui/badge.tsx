@@ -9,9 +9,11 @@ const badgeVariants = cva(
     variants: {
       variant: {
         default: "bg-brand/15 text-brand-light",
-        success: "bg-green-100 text-green-700",
-        warning: "bg-amber-100 text-amber-700",
-        destructive: "bg-red-100 text-red-700",
+        // 状态色用透明度式（浅亮底在深色主题下是违和的亮盒）：
+        // 与站内 banner（bg-*-500/10 + text-*-400）同一套双主题惯用式
+        success: "bg-emerald-500/15 text-emerald-400",
+        warning: "bg-amber-500/15 text-amber-400",
+        destructive: "bg-red-500/15 text-red-400",
         muted: "bg-white/10 text-theme-sub",
       },
     },

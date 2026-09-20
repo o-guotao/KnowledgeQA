@@ -14,11 +14,61 @@
 
 ### 新增
 
+- **门面首页（/）：滚动叙事作品集 React+TS 重写**：原 `public/showcase` 静态页（865 行 JS + 881 行 CSS）
+  等价移植为 `src/showcase/`（showcaseMath 纯函数 + useScrollProgress/useIntroScrub 引擎 + 10 个组件），
+  保留全部交互纪律（不从 currentTime 读回控制量 / 值没变不写 DOM / seek 挂起 / reduced-motion 与触屏降级）；
+  高频进度值 ref 直写不进 React state
+- **作品预览节接入真实应用**：iframe 实时内嵌 `/app`（未登录显示登录页，所见即所得）+ 三张可点卡片
+  （RAG 卡跳 `/app`，网站/Agent 卡占位）；文件夹内页改真 DOM 三卡片（可选中文字 + card-rag/web/agent.png）
+- **无视频叙事降级**：main.mp4 缺失时按节内进度写 `--par` 视差变量呈现，视频接口保留（放入
+  `public/media/main.mp4` 即自动接管）；媒体素材迁至 `public/media`，静态 showcase 已删除
 - **top_k 按问题复杂度自适应（L1-L3）**：L1 前端「检索范围」改为四档语义按钮（自动/精确 3/均衡 5/广泛 10），
   默认自动；L2 后端规则路由 `auto_top_k`（列举/对比类 → 10、单点事实短问句 → 3、其余 → 5）；
   L3 重排后分数断崖截断（top_k 退化为上限，证据集中时实际块数更少，下限 3，仅自动模式且重排开启时生效，
   用户显式指定 top_k 时不截断）。L4（LLM 查询分类路由）未做，见 `docs/功能规划.md`
 - CORS methods/headers 收紧为显式列表（带凭证跨域规范）
+- **门面叙事视频**：`intro-loop.mp4`（首屏擦洗）与 `main.mp4`（滚动叙事）均经 delogo 去水印 +
+  lanczos 升采样至 2560×1440 + 密关键帧（GOP=6，保证 seek 每帧清晰）+ CRF22 处理；fallbackDuration
+  与 intro 对齐为 10，HUD 时间码不再在首屏/其余节间跳变
+- **AuthLayout 公共外壳**：登录/注册页品牌区/特性列表/版本号逻辑收拢至 `components/AuthLayout.tsx`
+  （此前两页整块复制约 80 行×2）
+
+### 变更（破坏性）
+
+- **KnowledgeQA 应用整体迁移至 `/app` 前缀**：`/login`→`/app/login`、`/`→`/app`、`/documents`→`/app/documents`、
+  `/settings/models`→`/app/settings/models`、`/admin`→`/app/admin`、`/changelog`→`/app/changelog`；
+  登录后默认进 `/app`；`/` 成为公开门面页；站内全部跳转点已同步更新
+
+### 修复
+
+- **可访问性（WCAG 2.2）**：① 768px 抽屉关闭态 `visibility:hidden` 移出 Tab 序（原焦点进入屏外元素）；
+  ② 全局 `:focus-visible` 焦点环补齐裸按钮（原仅 ui/Button 等有，键盘导航隐身）；③ 点击区 <24px 统一提升
+  （会话删除钮常显 26px、版本钮/引用角标/反馈钮/搜索清除钮 padding、原生 checkbox 13→18px）；
+  ④ 标题层级修正（Hero 装饰字组 h2→p，首个标题恢复为 h1）；⑤ 预览弹窗补 ESC 关闭 + 图片可键盘缩放；
+  ⑥ Eval 表行 `tr onClick` 补 Enter/Space 键盘可达；⑦ 会话行 div[role=button] 补 Space 键
+- **对比度**：`--ink-faint` alpha .42→.62（3.1:1→4.9:1，达 AA）；ICP 备案文字 slate-500 11px→slate-400 12px
+  （2.6:1→4.9:1）；首屏右栏/gaze 区换双层暗晕 text-shadow 保住视频人脸上的可读性
+- **弹窗与错误反馈统一**：ModelSettings `window.confirm`→`ConfirmDialog`；Documents 5 处 `window.alert`
+  →行内错误横幅（6s 自动消失）；DocumentPreviewModal 补 ESC + 白底容器内 ghost 按钮强制深色文字
+- **双主题一致性**：`html.light` 兜底补 4 条（divide-slate-100 / bg-black/40 / bg-slate-950 系 /
+  hover:bg-indigo-100）；Admin/ModelSettings/Eval 的浅色 banner（bg-red-50 等 7 处）+ Badge 三变体
+  统一到项目惯用式 `*-500/30 + *-500/10 + *-400`（深色主题下不再有亮盒违和）
+- **Admin 权限守卫**：非管理员访问 `/app/admin` 显示权限空态，不再泄露管理骨架 + 满屏报错
+- **Changelog**：条目内联 Markdown 改 `react-markdown` 渲染（原 `**` 星号裸露）；补加载骨架
+- **文件夹弹图**：① 收起按钮 `right:-50%`→`fixed/right:var(--gut)`（1440 裁边、768 全屏外→均在屏内）；
+  ② 弹图 `max-height: calc(100vh-21rem)` 不再越出视口压 HUD、橙色标题带不再被腰斩；
+  ③ 底部渐隐 16%→8%（保住文件夹标题带）；④ `place-items:start center` 上移避开视频中上部人脸 +
+  为提示行留位；⑤ 弹图打开时 scrim `is-dim` 整屏压暗一档（人物退为背景）；⑥ 焦点回位延迟 320ms
+  等 openbtn visibility 过渡结束（原立即 focus 被浏览器忽略，焦点丢到 body）
+- **作品预览 iframe 自适应**：原 `133%+scale(.75)` 方案因 `overflow:hidden` 在 transform 之前裁剪
+  导致 iframe 实际可见只剩 frame 的 75%（右下 1/4 空白透出视频）；重构为 `container-type:inline-size`
+  + `aspect-ratio:16/9`（与 iframe 内部 1280×720 同比）+ `scale(calc(100cqw/1280px))`，视觉与 frame
+  严丝合缝、内部 app 以桌面视口渲染自适应；静态底图由人像照片换为产品登录页截图；CTA 改实心 pill
+- **预览节滚动条**：视觉隐藏（`scrollbar-width:none` + webkit `display:none`），滚动能力保留
+- **首页不渲染 ICP 页脚**：App.tsx 抽 Shell 用 useLocation，`pathname === "/"` 时不渲染 IcpFooter
+  （原与 HUD 矩形相交 7px）；各滚动页主容器加 `pb-14` 避免内容从固定页脚下穿过
+- **登录页**：移除用户名 `demo` 开发预填
+- **Documents 文件夹/标签输入**：原生 input 换 `ui/Input`（获统一 focus 环）
 
 ## [0.4.0] - 2026-09-17
 

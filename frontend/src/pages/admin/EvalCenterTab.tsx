@@ -286,7 +286,7 @@ export default function EvalCenterTab() {
   return (
     <div className="space-y-6">
       {error && (
-        <div role="status" className="rounded-lg border border-red-200 bg-red-50 px-4 py-3 text-sm text-red-700">{error}</div>
+        <div role="status" className="rounded-lg border border-red-500/30 bg-red-500/10 px-4 py-3 text-sm text-red-400">{error}</div>
       )}
 
       {/* KPI 卡条 */}
@@ -373,6 +373,14 @@ export default function EvalCenterTab() {
                       key={r.id}
                       className={`cursor-pointer border-t border-slate-100 ${isActive ? "bg-brand/5" : "hover:bg-white/5"}`}
                       onClick={() => { setSelectedIds([]); setActiveRunId(r.id); }}
+                      tabIndex={0}
+                      onKeyDown={(e) => {
+                        if (e.key === "Enter" || e.key === " ") {
+                          e.preventDefault();
+                          setSelectedIds([]);
+                          setActiveRunId(r.id);
+                        }
+                      }}
                     >
                       <td className="py-2 pr-1" onClick={(e) => e.stopPropagation()}>
                         <input
@@ -428,17 +436,17 @@ export default function EvalCenterTab() {
 
       {/* 选中 run 的状态面板：failed 显示错误，pending/running 显示进度 */}
       {!compareMode && !tooManySelected && detail && detail.run.status === "failed" && (
-        <div role="status" className="rounded-lg border border-red-200 bg-red-50 px-4 py-3 text-sm text-red-700">
+        <div role="status" className="rounded-lg border border-red-500/30 bg-red-500/10 px-4 py-3 text-sm text-red-400">
           「{detail.run.name}」运行失败：{detail.run.error ?? "未知错误"}
         </div>
       )}
       {!compareMode && !tooManySelected && detail && (detail.run.status === "pending" || detail.run.status === "running") && (
-        <div role="status" className="rounded-lg border border-amber-200 bg-amber-50 px-4 py-3 text-sm text-amber-700">
+        <div role="status" className="rounded-lg border border-amber-500/30 bg-amber-500/10 px-4 py-3 text-sm text-amber-400">
           「{detail.run.name}」正在{detail.run.status === "pending" ? "排队" : "运行"}中，完成后自动展示数据…
         </div>
       )}
       {!compareMode && !tooManySelected && detail && detail.run.status === "done" && groups.some((g) => groupAt(g).llm_error) && (
-        <div role="status" className="rounded-lg border border-amber-200 bg-amber-50 px-4 py-3 text-sm text-amber-700">
+        <div role="status" className="rounded-lg border border-amber-500/30 bg-amber-500/10 px-4 py-3 text-sm text-amber-400">
           LLM 答案评测已降级：{groups.map((g) => groupAt(g).llm_error).find(Boolean)}
           （召回指标不受影响；请检查「模型设置」中的 key 或 DEEPSEEK_API_KEY 后重发）
         </div>

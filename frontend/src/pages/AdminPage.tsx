@@ -15,6 +15,7 @@ import {
   type ModelUsage,
   type UserUsage,
 } from "../api/schemas";
+import { useAuth } from "../auth/AuthContext";
 import { Button } from "../components/ui/button";
 import { Card, CardContent, CardHeader, CardTitle } from "../components/ui/card";
 import { ConfirmDialog } from "../components/ConfirmDialog";
@@ -35,6 +36,7 @@ const emptyDraft = (): Draft => ({ username: "", password: "", display_name: "",
 
 export function AdminPage() {
   const navigate = useNavigate();
+  const { user, loading } = useAuth();
   const [tab, setTab] = useState<"usage" | "eval">("usage");
   const [daily, setDaily] = useState<DailyUsage[]>([]);
   const [roleFilter, setRoleFilter] = useState<string>("");
@@ -135,17 +137,27 @@ export function AdminPage() {
   };
 
   return (
-    <main className="min-h-screen bg-gradient-to-b from-theme-bg via-theme-bg to-theme-deep px-4 py-8 sm:px-8">
+    <main className="min-h-screen bg-gradient-to-b from-theme-bg via-theme-bg to-theme-deep px-4 pt-8 pb-14 sm:px-8">
+      {/* 页面级权限守卫：API 仍会拒绝非管理员请求，但此前普通用户能看到
+          完整管理骨架 + 满屏「需要管理员权限」报错，泄露功能结构且体验差 */}
+      {!loading && user?.role !== "admin" ? (
+        <div className="mx-auto flex max-w-md flex-col items-center gap-3 py-24 text-center">
+          <Users size={28} className="text-theme-sub" />
+          <p className="text-lg font-semibold text-theme-text">需要管理员权限</p>
+          <p className="text-sm text-theme-sub">此页面仅对管理员开放。如需管理用户与用量，请联系管理员开通权限。</p>
+          <Button variant="outline" onClick={() => navigate("/app")}>返回问答</Button>
+        </div>
+      ) : (
       <div className="mx-auto max-w-[1400px] space-y-6">
         <header className="flex items-center justify-between gap-3">
           <div className="flex items-center gap-3">
-            <Button variant="ghost" size="icon" aria-label="返回问答" onClick={() => navigate("/")}><ArrowLeft size={18} /></Button>
+            <Button variant="ghost" size="icon" aria-label="返回问答" onClick={() => navigate("/app")}><ArrowLeft size={18} /></Button>
             <div><p className="text-sm font-medium text-brand">管理后台</p><h1 className="text-2xl font-semibold tracking-tight text-theme-text">用量与用户管理</h1></div>
           </div>
           <ThemeToggle />
         </header>
         {(message || error) && (
-          <div role="status" className={`rounded-lg border px-4 py-3 text-sm ${error ? "border-red-200 bg-red-50 text-red-700" : "border-emerald-200 bg-emerald-50 text-emerald-700"}`}>{error ?? message}</div>
+          <div role="status" className={`rounded-lg border px-4 py-3 text-sm ${error ? "border-red-500/30 bg-red-500/10 text-red-400" : "border-emerald-500/30 bg-emerald-500/10 text-emerald-400"}`}>{error ?? message}</div>
         )}
 
         {/* Tab：用量与用户 | 评测中心 */}
@@ -331,6 +343,7 @@ export function AdminPage() {
           onCancel={() => setDeleteTarget(null)}
         />
       </div>
+      )}
     </main>
   );
 }
