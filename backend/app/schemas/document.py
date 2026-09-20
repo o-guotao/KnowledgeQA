@@ -36,6 +36,19 @@ class ContentUpdateResult(BaseModel):
     document: DocumentOut
 
 
+class DocumentOverview(BaseModel):
+    """文档思维导图用的轻量元数据（全量、不分页）。
+    只取分类树所需字段：folder/tags/filename/status。"""
+
+    id: uuid.UUID
+    filename: str
+    folder: str = ""
+    tags: list[str] = []
+    status: str = ""
+
+    model_config = {"from_attributes": True}
+
+
 class DocumentUpdate(BaseModel):
     folder: str | None = Field(default=None, max_length=128)
     tags: list[str] | None = None

@@ -106,6 +106,16 @@ export const MessageSchema = z.object({
 export type Message = z.infer<typeof MessageSchema>;
 
 // ---------- 文档与引用 ----------
+/** 文档思维导图轻量元数据（/documents/overview，全量不分页） */
+export const DocumentOverviewSchema = z.object({
+  id: z.string().uuid(),
+  filename: z.string(),
+  folder: z.string().default(""),
+  tags: z.array(z.string()).default([]),
+  status: z.string().default(""),
+});
+export type DocumentOverview = z.infer<typeof DocumentOverviewSchema>;
+
 export const DocumentSchema = z.object({
   id: z.string().uuid(),
   filename: z.string(),

@@ -34,6 +34,7 @@ from app.schemas.document import (
     ChunkOut,
     ContentUpdateResult,
     DocumentOut,
+    DocumentOverview,
     DocumentUpdate,
 )
 from app.services.doc_sync import stale_reasons
@@ -44,6 +45,10 @@ logger = logging.getLogger(__name__)
 router = APIRouter()
 
 MAX_UPLOAD_BYTES = 20 * 1024 * 1024  # 20MB
+
+# 「未分组」过滤哨兵：folder 为空字符串时前端 query 序列化会丢弃该参数，
+# 用此哨兵表达「folder 为空/未设置」的精确过滤（思维导图未分组分支联动列表）
+UNGROUPED_SENTINEL = "__ungrouped__"
 
 # 上传白名单与分类：图片仅预览不切分；pdf/docx/xlsx 在请求内做可解析探测
 ALLOWED_EXTENSIONS = (
@@ -250,7 +255,10 @@ async def list_documents(
     排序带 id 兜底：created_at 相同（同批上传）时保证分页不重复、不遗漏。
     """
     stmt = select(Document).where(Document.user_id == user.id)
-    if folder is not None:
+    if folder == UNGROUPED_SENTINEL:
+        # 思维导图「未分组」分支：folder 为空/未设置
+        stmt = stmt.where(or_(Document.folder == "", Document.folder.is_(None)))
+    elif folder is not None:
         stmt = stmt.where(Document.folder == folder)
     term = normalize_q(q)
     if term is not None:
@@ -277,6 +285,25 @@ async def list_folders(
         )
     ).scalars().all()
     return sorted(rows)
+
+
+@router.get("/documents/overview", response_model=list[DocumentOverview])
+async def documents_overview(
+    db: AsyncSession = Depends(get_db), user: User = Depends(get_current_user)
+) -> list[DocumentOverview]:
+    """当前用户全部文档的轻量元数据（不分页）：思维导图分类树数据源。
+
+    只取 folder/tags/filename/status 四字段，内部知识库量级下一次性返回可接受；
+    路由声明在 /documents/{document_id} 之前（同 stats）。
+    """
+    rows = (
+        await db.execute(
+            select(Document)
+            .where(Document.user_id == user.id)
+            .order_by(Document.created_at.desc(), Document.id.desc())
+        )
+    ).scalars().all()
+    return [DocumentOverview.model_validate(r) for r in rows]
 
 
 @router.get("/documents/stats", response_model=DocumentStats)

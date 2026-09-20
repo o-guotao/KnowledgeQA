@@ -6,14 +6,17 @@ import { z } from "zod";
 import { del, get, patch, post, postForm, withQuery } from "../api/client";
 import {
   ContentUpdateResultSchema,
+  DocumentOverviewSchema,
   DocumentSchema,
   DocumentStatsSchema,
   pageSchema,
+  type DocumentOverview,
   type DocumentStats,
   type KnowledgeDocument,
 } from "../api/schemas";
 import { useAuth } from "../auth/AuthContext";
 import { ConfirmDialog } from "../components/ConfirmDialog";
+import { DocMindmap, UNGROUPED } from "../components/DocMindmap";
 import { DocumentPreviewModal, docKind } from "../components/DocumentPreviewModal";
 import { ThemeToggle } from "../components/ThemeToggle";
 import { Badge } from "../components/ui/badge";
@@ -108,6 +111,7 @@ export function DocumentsPage() {
   const [uploadTags, setUploadTags] = useState("");
   const [filterFolder, setFilterFolder] = useState<string | null>(null);
   const [folders, setFolders] = useState<string[]>([]);
+  const [overviewDocs, setOverviewDocs] = useState<DocumentOverview[]>([]);
   const [stats, setStats] = useState<DocumentStats | null>(null);
 
   // 我的文档：服务端分页 + 关键词（文件名/标签）；folder 过滤走 extraParams（变化时回第 1 页）
@@ -139,19 +143,25 @@ export function DocumentsPage() {
     get("/documents/folders", z.array(z.string())).then(setFolders).catch(() => {});
   }, []);
 
+  const refreshOverview = useCallback(() => {
+    get("/documents/overview", z.array(DocumentOverviewSchema)).then(setOverviewDocs).catch(() => {});
+  }, []);
+
   // 顶部 chips 计数来自 /documents/stats（全局口径，不随分页/搜索变化）
   const refresh = useCallback(() => {
     docsQuery.refresh();
     refreshStats();
     refreshFolders();
-  }, [docsQuery.refresh, refreshStats, refreshFolders]); // eslint-disable-line react-hooks/exhaustive-deps
+    refreshOverview();
+  }, [docsQuery.refresh, refreshStats, refreshFolders, refreshOverview]); // eslint-disable-line react-hooks/exhaustive-deps
 
   // 首次挂载拉取顶部计数与文件夹 chips（文档列表由 usePaginatedQuery 自行加载；
   // stats/folders 不挂载拉取会一直停留在 null/[]，表现为「全部 0」且无文件夹按钮）
   useEffect(() => {
     refreshStats();
     refreshFolders();
-  }, [refreshStats, refreshFolders]);
+    refreshOverview();
+  }, [refreshStats, refreshFolders, refreshOverview]);
 
   /** 共享/取消共享到团队空间（owner 或 admin） */
   const toggleShare = async (doc: KnowledgeDocument) => {
@@ -557,6 +567,14 @@ export function DocumentsPage() {
           className="w-full sm:max-w-sm"
         />
         {docsQuery.error && <p className="text-sm text-red-400">文档加载失败：{docsQuery.error}</p>}
+        {/* 思维导图：文件夹/标签/文件 分类树，点击文件夹节点联动下方列表过滤 */}
+        {overviewDocs.length > 0 && (
+          <DocMindmap
+            docs={overviewDocs}
+            activeFolder={filterFolder}
+            onPickFolder={(f) => setFilterFolder(f)}
+          />
+        )}
         <div className="flex flex-wrap items-center gap-2 text-sm">
           <button
             type="button"
@@ -565,7 +583,7 @@ export function DocumentsPage() {
           >
             全部 {totalCount}
           </button>
-          {folders.map((f) => (
+          {folders.filter((f) => f !== "").map((f) => (
             <button
               key={f}
               type="button"
@@ -575,6 +593,15 @@ export function DocumentsPage() {
               {f}
             </button>
           ))}
+          {folders.includes("") && (
+            <button
+              type="button"
+              onClick={() => setFilterFolder(filterFolder === UNGROUPED ? null : UNGROUPED)}
+              className={`rounded-full px-3 py-1 cursor-pointer transition-colors ${filterFolder === UNGROUPED ? "bg-brand text-white" : "bg-brand/15 text-brand-light hover:bg-indigo-100"}`}
+            >
+              未分组
+            </button>
+          )}
           <span className="rounded-full bg-emerald-500/15 px-3 py-1 text-emerald-400">已入库 {readyCount}</span>
           {pendingCount > 0 && (
             <span className="rounded-full bg-amber-500/15 px-3 py-1 text-amber-400">处理中 {pendingCount}</span>
