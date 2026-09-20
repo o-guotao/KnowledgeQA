@@ -1,4 +1,4 @@
-import { ArrowLeft, Eye, FileSpreadsheet, FileText, FileUp, Image as ImageIcon, Layers, Loader2, Quote, RefreshCw, Share2, Trash2, Users, X } from "lucide-react";
+import { ArrowLeft, Eye, FileSpreadsheet, FileText, FileUp, Image as ImageIcon, Layers, List, Loader2, Network, Quote, RefreshCw, Share2, Trash2, Users, X } from "lucide-react";
 import { useCallback, useEffect, useRef, useState } from "react";
 import { useNavigate } from "react-router-dom";
 import { z } from "zod";
@@ -17,7 +17,7 @@ import {
 import { useAuth } from "../auth/AuthContext";
 import { ConfirmDialog } from "../components/ConfirmDialog";
 import { DocumentPreviewModal, docKind } from "../components/DocumentPreviewModal";
-import { UNGROUPED } from "../components/DocMindmap";
+import { DocMindmap, UNGROUPED } from "../components/DocMindmap";
 import { FolderNav } from "../components/FolderNav";
 import { ThemeToggle } from "../components/ThemeToggle";
 import { Badge } from "../components/ui/badge";
@@ -25,7 +25,9 @@ import { Button } from "../components/ui/button";
 import { Card, CardContent } from "../components/ui/card";
 import { Pagination } from "../components/ui/pagination";
 import { SearchInput } from "../components/ui/search-input";
+import { Segmented } from "../components/ui/segmented";
 import { usePaginatedQuery } from "../hooks/usePaginatedQuery";
+import { getDocView, setDocView, type DocView } from "../lib/docView";
 
 const STATUS_META: Record<KnowledgeDocument["status"], { label: string; variant: "muted" | "warning" | "success" | "destructive" }> = {
   uploaded: { label: "排队中", variant: "muted" },
@@ -114,8 +116,12 @@ export function DocumentsPage() {
   const [folders, setFolders] = useState<string[]>([]);
   const [overviewDocs, setOverviewDocs] = useState<DocumentOverview[]>([]);
   const [stats, setStats] = useState<DocumentStats | null>(null);
-  // 分类导图开关：默认展开（内嵌于左侧导航栏，不挤压右栏列表）
-  const [mapOpen, setMapOpen] = useState(true);
+  // 内容区视图：列表 / 导图 互斥（占同一块位置），选择持久化到 localStorage
+  const [view, setView] = useState<DocView>(() => getDocView());
+  const switchView = (next: DocView) => {
+    setView(next);
+    setDocView(next);
+  };
 
   // 我的文档：服务端分页 + 关键词（文件名/标签）；folder 过滤走 extraParams（变化时回第 1 页）
   const docsQuery = usePaginatedQuery<KnowledgeDocument>(
@@ -444,20 +450,10 @@ export function DocumentsPage() {
           ))}
         </div>
 
-        {/* 主从布局：左栏文件夹导航（桌面常驻）+ 右栏内容主体。
-            列表优先占据第一屏，导图按需在右栏展开。 */}
+        {/* 「我的文档」：上传相关面板常驻，下面的内容区在「列表 / 导图」两视图间互斥切换 ——
+            导图不再内嵌侧栏，切到导图时左栏文件夹导航整体让位，导图吃满宽度。 */}
         {tab === "mine" && (
-        <div className="flex items-start gap-6">
-          <div className="hidden lg:block">
-            <FolderNav
-              docs={overviewDocs}
-              activeFolder={filterFolder}
-              onPickFolder={setFilterFolder}
-              mapOpen={mapOpen}
-              onToggleMap={() => setMapOpen((v) => !v)}
-            />
-          </div>
-          <div className="min-w-0 flex-1 space-y-6">
+        <>
         <p className="max-w-3xl text-sm leading-6 text-theme-sub">
           上传制度、手册或 FAQ（.txt/.md/.pdf/.docx/.xlsx，图片 .png/.jpg/.webp 仅预览不检索，单个 ≤ 20MB，可一次多选）。
           系统对重复内容/纯图片文件做校验并明确提示；合规文档自动切分入库，之后即可在问答中检索并带引用回答。
@@ -564,6 +560,23 @@ export function DocumentsPage() {
           </Card>
         )}
 
+        {/* 视图切换：列表（主从布局：左栏文件夹导航 + 右栏列表）/ 导图（占满内容区） */}
+        <Segmented
+          value={view}
+          onChange={switchView}
+          ariaLabel="视图切换"
+          options={[
+            { value: "list", label: "列表", icon: List },
+            { value: "map", label: "导图", icon: Network },
+          ]}
+        />
+
+        {view === "list" ? (
+        <div className="flex items-start gap-6">
+          <div className="hidden lg:block">
+            <FolderNav docs={overviewDocs} activeFolder={filterFolder} onPickFolder={setFilterFolder} />
+          </div>
+          <div className="min-w-0 flex-1 space-y-6">
         <SearchInput
           value={docsQuery.query}
           onChange={docsQuery.setQuery}
@@ -799,6 +812,12 @@ export function DocumentsPage() {
         </section>
           </div>
         </div>
+        ) : (
+          /* 导图视图：左栏让位，导图自身即文件夹选择器（总览网格 → 点击聚焦 → 点根返回）；
+             聚焦与列表共用 filterFolder，切回列表时过滤条件延续。 */
+          <DocMindmap docs={overviewDocs} activeFolder={filterFolder} onPickFolder={setFilterFolder} />
+        )}
+        </>
         )}
 
         {tab === "team" && (

@@ -215,8 +215,6 @@ interface DocMindmapProps {
   /** 当前选中的文件夹过滤值（null=全部；UNGROUPED=未分组） */
   activeFolder: string | null;
   onPickFolder: (folder: string | null) => void;
-  /** 窄栏嵌入模式：隐藏外壳边框/头部提示，卡片单列（FolderNav 内嵌时用） */
-  compact?: boolean;
 }
 
 /** 全部态：文件夹卡片网格。文件夹多时纵向单列树会变成几十行长蛇，
@@ -224,11 +222,9 @@ interface DocMindmapProps {
 function FolderGrid({
   docs,
   onPickFolder,
-  compact = false,
 }: {
   docs: OverviewDoc[];
   onPickFolder: (f: string) => void;
-  compact?: boolean;
 }) {
   const collate = new Intl.Collator("zh-CN");
   const groups = new Map<string, { label: string; count: number; failed: number; busy: number }>();
@@ -249,8 +245,8 @@ function FolderGrid({
   });
 
   return (
-    <div className={cn("overflow-y-auto scrollbar-thin", !compact && "max-h-[320px]")}>
-      <motion.div layout className={cn("grid gap-2", compact ? "grid-cols-1" : "grid-cols-2 sm:grid-cols-3 xl:grid-cols-4")}>
+    <div className="max-h-[60vh] overflow-y-auto scrollbar-thin">
+      <motion.div layout className="grid grid-cols-2 gap-2 sm:grid-cols-3 xl:grid-cols-4">
         <AnimatePresence initial={false}>
           {items.map(([fk, g]) => (
             <motion.button
@@ -298,21 +294,11 @@ function FolderGrid({
 /** 文档分类思维导图（双态）：
  * - 全部态：文件夹卡片网格（多列、高度可控），点击卡片聚焦该文件夹
  * - 聚焦态：文件夹→标签→文件 的横向树（Framer Motion 弹簧动画），点击根节点返回
- * 聚焦与列表过滤共用 activeFolder，导图与列表始终同步。 */
-export function DocMindmap({ docs, activeFolder, onPickFolder, compact = false }: DocMindmapProps) {
+ * 聚焦与列表过滤共用 activeFolder，导图与列表始终同步。
+ * 作为独立视图占满内容区（由 DocumentsPage 的「列表 / 导图」切换控制显隐）。 */
+export function DocMindmap({ docs, activeFolder, onPickFolder }: DocMindmapProps) {
   return (
-    <div
-      className={
-        compact
-          ? "" // 窄栏嵌入：无外壳，由外层 FolderNav 提供容器样式
-          : "rounded-xl border border-theme-line bg-theme-card p-4 shadow-soft"
-      }
-    >
-      {compact ? (
-        <p className="mb-2 px-1 text-xs text-theme-sub">
-          {activeFolder === null ? `共 ${docs.length} 份 · 点击文件夹聚焦` : "点击根节点返回全部"}
-        </p>
-      ) : (
+    <div className="rounded-xl border border-theme-line bg-theme-card p-4 shadow-soft">
       <div className="mb-3 flex items-center gap-2 text-xs text-theme-sub">
         {activeFolder === null ? (
           <Layers size={13} className="text-brand-light" />
@@ -339,7 +325,6 @@ export function DocMindmap({ docs, activeFolder, onPickFolder, compact = false }
           </motion.span>
         </AnimatePresence>
       </div>
-      )}
       {/* 双态有序过渡：先出后进（mode=wait）+ 最小高度，避免两态高度差
           导致容器跳变、滚动条闪现 */}
       <AnimatePresence mode="wait" initial={false}>
@@ -352,7 +337,7 @@ export function DocMindmap({ docs, activeFolder, onPickFolder, compact = false }
             transition={{ duration: 0.13 }}
             className="min-h-[200px]"
           >
-            <FolderGrid docs={docs} onPickFolder={onPickFolder} compact={compact} />
+            <FolderGrid docs={docs} onPickFolder={onPickFolder} />
           </motion.div>
         ) : (
           <motion.div
