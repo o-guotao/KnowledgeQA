@@ -79,6 +79,9 @@ class Settings(BaseSettings):
     rag_top_k: int = 5
     # 混合检索：向量 + 关键词 RRF 融合
     hybrid_search_enabled: bool = True
+    # 多轮追问的检索 query 条件改写：LLM 判断问题是否依赖历史，
+    # 依赖（省略主语/指代）则补全为独立问题再检索；自足/话题切换原样检索
+    query_rewrite_enabled: bool = True
     # 关键词召回引擎：true=BM25（jieba+rank_bm25 内存索引，推荐）；
     # false=数据库回退（Postgres tsvector / SQLite LIKE）
     bm25_enabled: bool = True

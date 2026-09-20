@@ -24,6 +24,7 @@ from app.models.message import Message
 from app.models.session import Session
 from app.models.usage_record import UsageRecord
 from app.models.user import User
+from app.config import get_settings
 from app.schemas.chat import (
     ChatRequest,
     CitationEvent,
@@ -36,6 +37,7 @@ from app.schemas.chat import (
 from app.services import cost, injection, langfuse_tracing
 from app.services.deepseek import ModelCallError, ModelTimeoutError
 from app.services.embedding import embed_query
+from app.services.query_rewrite import rewrite_query
 from app.services.rag import RAG_SYSTEM_PROMPT, auto_top_k, build_rag_user_content, retrieve
 from app.services.model_configs import ProviderConfig, resolve_provider_config
 from app.services.openai_compatible import stream_chat
@@ -129,21 +131,60 @@ async def _event_stream(
         async with SessionLocal() as db:
             provider: ProviderConfig = await resolve_provider_config(db, user.id)
 
+        accumulated_prompt = 0
+        accumulated_completion = 0
+        usage: dict | None = None
+
+        # ---- 检索 query 条件改写：追问句（"结构类型呢"）结合历史补全为独立问题；
+        # 自足/话题切换的问题原样返回。改写只影响检索 query，不进模型 messages。
+        # 任何失败回退原文检索，不影响主流程；改写 token 计入配额与总账单 ----
+        retrieval_query = body.content
+        history_context = history[:-1]  # 末尾是刚落库的当前问题，不作为改写上下文
+        if history_context and get_settings().query_rewrite_enabled:
+            try:
+                rw = await rewrite_query(provider, history_context, body.content)
+                retrieval_query = rw.query
+                langfuse_tracing.trace_generation(
+                    trace_id, "query_rewrite", provider.model_name, rw.messages,
+                    rw.output, rw.usage,
+                    metadata={"rewritten": rw.rewritten, "retrieval_query": rw.query[:200]},
+                )
+                if rw.usage:
+                    p, c = rw.usage.get("prompt_tokens", 0), rw.usage.get("completion_tokens", 0)
+                    accumulated_prompt += p
+                    accumulated_completion += c
+                    async with SessionLocal() as db:
+                        await cost.accumulate_usage(db, user.id, p, c)
+                        db.add(UsageRecord(
+                            user_id=user.id, session_id=body.session_id,
+                            model=provider.model_name, prompt_tokens=p,
+                            completion_tokens=c, cost_cny=cost.compute_cost_cny(
+                                p, c, provider.price_input_per_million,
+                                provider.price_output_per_million,
+                            ), trace_id=trace_id,
+                        ))
+                        await db.commit()
+            except Exception as exc:
+                logger.warning("query rewrite degraded: %s", exc, extra={"event": "query_rewrite_degraded"})
+
         # ---- RAG 召回（按用户隔离），失败降级为空召回 ----
-        with langfuse_tracing.trace_span(trace_id, "retrieve", {"query": body.content[:200]}):
+        with langfuse_tracing.trace_span(
+            trace_id, "retrieve",
+            {"query": retrieval_query[:200], "original_query": body.content[:200]},
+        ):
             try:
                 t0 = time.perf_counter()
                 timing: dict = {}
-                query_vec = await embed_query(body.content)
+                query_vec = await embed_query(retrieval_query)
                 # top_k 决策：用户显式指定（前端三档）→ 直接用、不截断；
                 # 未指定（自动）→ L2 规则路由定上限 + L3 重排分数断崖截断定实际块数
                 if body.top_k is not None:
                     k, adaptive = body.top_k, False
                 else:
-                    k, adaptive = auto_top_k(body.content), True
+                    k, adaptive = auto_top_k(retrieval_query), True
                 async with SessionLocal() as db:
                     chunks = await retrieve(
-                        db, user.id, query_vec, top_k=k, query_text=body.content,
+                        db, user.id, query_vec, top_k=k, query_text=retrieval_query,
                         timing=timing, adaptive_k=adaptive,
                     )
                 # recall_ms = embed + 向量/关键词/RRF（不含重排）
@@ -174,9 +215,7 @@ async def _event_stream(
         # ---- 模型流式调用（工具回路最多 2 轮） ----
         # 每轮 stream_chat 末尾会 yield usage（含工具调用轮）；
         # usage 事件到达即累计费用，避免工具回路/确认路径漏算 token。
-        accumulated_prompt = 0
-        accumulated_completion = 0
-        usage: dict | None = None
+        # accumulated_* 已在召回前初始化（含改写 token），此处直接累加。
         for round_no in range(2):
             has_tool_call = False
             async for kind, payload, result in stream_chat(
