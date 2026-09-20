@@ -5,6 +5,7 @@ import { z } from "zod";
 
 import type { Message } from "../api/schemas";
 import { cn } from "../lib/utils";
+import { CopyButton } from "./CopyButton";
 import { ErrorCard } from "./ErrorCard";
 
 const CitationSchema = z.object({
@@ -41,6 +42,27 @@ function parseCitations(raw: unknown): Array<z.infer<typeof CitationSchema>> {
     .map((r) => r.data);
 }
 
+/** 首字（TTFT）阶段占位：三个错峰跳动圆点 + 阶段文案。
+ * 事件顺序 citation* 先于 delta*，用引用条数区分「检索中/生成中」两阶段。 */
+function ThinkingIndicator({ citations }: { citations: number }) {
+  return (
+    <div className="flex items-center gap-2.5 py-1">
+      <span className="flex gap-1" aria-hidden>
+        {[0, 150, 300].map((delay) => (
+          <span
+            key={delay}
+            className="h-1.5 w-1.5 animate-bounce rounded-full bg-brand-light"
+            style={{ animationDelay: `${delay}ms` }}
+          />
+        ))}
+      </span>
+      <span className="text-sm text-theme-sub" role="status">
+        {citations > 0 ? `已找到 ${citations} 条相关资料，正在生成回答…` : "正在检索知识库…"}
+      </span>
+    </div>
+  );
+}
+
 export function MessageItem({ message, streaming, onCitationClick, onRetry, onFeedback }: MessageItemProps) {
   const isUser = message.role === "user";
   const citations = parseCitations(message.citations);
@@ -55,7 +77,7 @@ export function MessageItem({ message, streaming, onCitationClick, onRetry, onFe
   };
 
   return (
-    <div className={cn("flex gap-3 animate-fade-up", isUser && "flex-row-reverse")}>
+    <div className={cn("group flex gap-3 animate-fade-up", isUser && "flex-row-reverse")}>
       <div
         className={cn(
           "flex h-8 w-8 shrink-0 items-center justify-center rounded-full shadow-soft",
@@ -84,6 +106,8 @@ export function MessageItem({ message, streaming, onCitationClick, onRetry, onFe
           >
             {isUser || message.role === "tool" ? (
               <p className="whitespace-pre-wrap leading-relaxed">{message.content}</p>
+            ) : streaming && !message.content ? (
+              <ThinkingIndicator citations={citations.length} />
             ) : (
               <div className="markdown-body">
                 <ReactMarkdown remarkPlugins={[remarkGfm]}>{message.content}</ReactMarkdown>
@@ -94,7 +118,13 @@ export function MessageItem({ message, streaming, onCitationClick, onRetry, onFe
             )}
           </div>
         )}
-        {!isUser && (citations.length > 0 || canFeedback) && (
+        {/* 用户问题：hover 显示一键复制（失败态无内容可复制，不展示） */}
+        {isUser && message.content && message.status !== "failed" && (
+          <div className="flex opacity-0 transition-opacity duration-200 group-hover:opacity-100">
+            <CopyButton text={message.content} label="复制问题" />
+          </div>
+        )}
+        {message.role === "assistant" && message.content && message.status !== "failed" && (
           <div className="flex items-center gap-1">
             {citations.map((c, i) => (
               <button
@@ -107,6 +137,7 @@ export function MessageItem({ message, streaming, onCitationClick, onRetry, onFe
                 [{i + 1}]
               </button>
             ))}
+            <CopyButton text={message.content} label="复制回答" />
             {canFeedback && (
               <span className="ml-auto flex items-center gap-1">
                 <button

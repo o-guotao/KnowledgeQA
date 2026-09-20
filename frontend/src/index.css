@@ -40,6 +40,36 @@
   ::selection {
     @apply bg-brand/15 text-ink;
   }
+  /* 全局滚动条主题适配：所有滚动容器（含 textarea/aside/modal）统一细滚动条，
+     深色=半透明白、浅色=半透明墨；Firefox 用 scrollbar-color，Chromium 用 ::-webkit-scrollbar。
+     组件上的 scrollbar-thin 类与此等效，保留兼容。 */
+  * {
+    scrollbar-width: thin;
+    scrollbar-color: rgb(255 255 255 / 0.2) transparent;
+  }
+  html.light * {
+    scrollbar-color: rgb(17 24 39 / 0.25) transparent;
+  }
+  ::-webkit-scrollbar {
+    width: 6px;
+    height: 6px;
+  }
+  ::-webkit-scrollbar-track {
+    background: transparent;
+  }
+  ::-webkit-scrollbar-thumb {
+    background: rgb(255 255 255 / 0.2);
+    border-radius: 9999px;
+  }
+  ::-webkit-scrollbar-thumb:hover {
+    background: rgb(255 255 255 / 0.3);
+  }
+  html.light ::-webkit-scrollbar-thumb {
+    background: rgb(17 24 39 / 0.25);
+  }
+  html.light ::-webkit-scrollbar-thumb:hover {
+    background: rgb(17 24 39 / 0.4);
+  }
 }
 
 @layer components {
