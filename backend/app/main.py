@@ -8,6 +8,10 @@ from app.core.tracing import TraceMiddleware
 from app.logging_config import configure_logging
 from app.version import get_version
 
+# 显式 import 确保新模型注册进 Base.metadata（sqlite create_all / alembic autogenerate 依赖）
+import app.models.memory  # noqa: F401
+import app.models.session  # noqa: F401
+
 configure_logging()
 
 settings = get_settings()

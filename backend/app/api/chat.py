@@ -11,6 +11,7 @@ import logging
 import time
 import uuid
 from collections.abc import AsyncGenerator
+from datetime import datetime
 
 from fastapi import APIRouter, Depends, Request
 from sqlalchemy import select, update
@@ -53,16 +54,19 @@ def _sse(event) -> dict:
     return {"data": event.model_dump_json()}
 
 
-async def _load_history(session_id: uuid.UUID) -> list[dict]:
+async def _load_history(session_id: uuid.UUID, after: datetime | None = None) -> list[dict]:
+    """会话历史（生成侧）：水位之后的消息；摘要已覆盖的部分不再进 prompt。
+    after 为摘要水位（summarized_until），为 None 时取全部（向后兼容）。"""
     async with SessionLocal() as db:
-        rows = (
-            await db.execute(
-                select(Message)
-                .where(Message.session_id == session_id, Message.status == "complete")
-                .order_by(Message.created_at.desc())
-                .limit(HISTORY_LIMIT)
-            )
-        ).scalars().all()
+        stmt = (
+            select(Message)
+            .where(Message.session_id == session_id, Message.status == "complete")
+            .order_by(Message.created_at.desc())
+            .limit(HISTORY_LIMIT)
+        )
+        if after is not None:
+            stmt = stmt.where(Message.created_at > after)
+        rows = (await db.execute(stmt)).scalars().all()
     history = []
     for m in reversed(rows):
         if m.role == "user":
@@ -70,6 +74,29 @@ async def _load_history(session_id: uuid.UUID) -> list[dict]:
         elif m.role == "assistant" and m.content:
             history.append({"role": "assistant", "content": m.content})
     return history
+
+
+async def _schedule_memory_tasks(session_id: uuid.UUID, user_id: uuid.UUID, trace_id: str) -> None:
+    """对话完成后投递 L2 摘要 / L3 记忆抽取任务（异步、失败由任务重试兜底）。"""
+    from app.models.task import Task
+
+    settings = get_settings()
+    async with SessionLocal() as db:
+        if settings.session_summary_enabled:
+            db.add(Task(
+                type="summarize_session",
+                payload={"session_id": str(session_id)},
+                user_id=user_id, trace_id=trace_id,
+                max_retries=1,  # 摘要非关键路径，不重试多次
+            ))
+        if settings.memory_extraction_enabled:
+            db.add(Task(
+                type="extract_memories",
+                payload={"session_id": str(session_id)},
+                user_id=user_id, trace_id=trace_id,
+                max_retries=1,
+            ))
+        await db.commit()
 
 
 async def _finish_message(message_id: uuid.UUID, **values) -> None:
@@ -127,7 +154,8 @@ async def _event_stream(
             await db.refresh(assistant)
             assistant_id = assistant.id
 
-        history = await _load_history(body.session_id)
+        # L2 摘要水位：摘要已覆盖的消息不再进 history（summary 另行注入 system）
+        history = await _load_history(body.session_id, after=session.summarized_until)
         async with SessionLocal() as db:
             provider: ProviderConfig = await resolve_provider_config(db, user.id)
 
@@ -205,9 +233,28 @@ async def _event_stream(
                 document_name=c.document_name, snippet=c.content[:120],
             ))
 
-        # 系统指令独立为 system 角色（约束更强）；history 末尾刚落库的用户消息替换为 RAG 数据版本
+        # ---- 记忆注入：L3 长期记忆按当前问题向量召回，与 L2 会话摘要一同进 system ----
+        memory_block = ""
+        try:
+            from app.services.memory import recall_memories, render_memories
+
+            async with SessionLocal() as db:
+                memories = await recall_memories(
+                    db, user.id, query_vec, top=get_settings().memory_recall_top
+                )
+            memory_block = render_memories(memories)
+        except Exception as exc:
+            logger.warning("memory inject degraded: %s", exc, extra={"event": "memory_inject_degraded"})
+
+        # 系统指令独立为 system 角色（约束更强）；history 末尾刚落库的用户消息替换为 RAG 数据版本。
+        # L2 摘要（session.summary）与 L3 记忆块附加在系统指令之后。
+        system_parts = [RAG_SYSTEM_PROMPT]
+        if session.summary:
+            system_parts.append(f"本会话此前对话的摘要（供上下文参考）：\n{session.summary}")
+        if memory_block:
+            system_parts.append(memory_block)
         messages = (
-            [{"role": "system", "content": RAG_SYSTEM_PROMPT}]
+            [{"role": "system", "content": "\n\n".join(system_parts)}]
             + history[:-1]
             + [{"role": "user", "content": build_rag_user_content(body.content, chunks)}]
         )
@@ -316,6 +363,11 @@ async def _event_stream(
             citations=citations,
             usage={**(usage or {}), "cost_cny": cost_cny} if usage else None,
         )
+        # 记忆任务（L2 摘要 / L3 抽取）：对话完成后异步投递，不阻塞 SSE 收尾
+        try:
+            await _schedule_memory_tasks(body.session_id, user.id, trace_id)
+        except Exception as exc:
+            logger.warning("memory tasks scheduling failed: %s", exc, extra={"event": "memory_schedule_failed"})
         # Langfuse 记录完整生成（输出 + token usage），供成本与质量分析
         langfuse_tracing.trace_generation(
             trace_id, "chat_completion", provider.model_name, messages,

@@ -82,6 +82,12 @@ class Settings(BaseSettings):
     # 多轮追问的检索 query 条件改写：LLM 判断问题是否依赖历史，
     # 依赖（省略主语/指代）则补全为独立问题再检索；自足/话题切换原样检索
     query_rewrite_enabled: bool = True
+    # L2 会话滚动摘要：窗口外历史异步压缩进 sessions.summary，超长对话不丢主线
+    session_summary_enabled: bool = True
+    # L3 长期记忆：从对话抽取用户事实/偏好入 memory_items，跨会话召回注入 prompt
+    memory_extraction_enabled: bool = True
+    # 每轮注入 system prompt 的记忆条数上限
+    memory_recall_top: int = 3
     # 关键词召回引擎：true=BM25（jieba+rank_bm25 内存索引，推荐）；
     # false=数据库回退（Postgres tsvector / SQLite LIKE）
     bm25_enabled: bool = True

@@ -206,6 +206,22 @@ async def run_task(task: Task) -> None:
         from app.services.eval_runner import run_eval_run
 
         await run_eval_run(uuid.UUID(task.payload["run_id"]))
+    elif task.type == "summarize_session":
+        # L2 记忆：会话滚动摘要（LLM 调用需 provider 配置，任务内解析）
+        from app.services.memory import summarize_session
+        from app.services.model_configs import resolve_provider_config
+
+        async with SessionLocal() as db:
+            provider = await resolve_provider_config(db, task.user_id)
+        await summarize_session(uuid.UUID(task.payload["session_id"]), provider)
+    elif task.type == "extract_memories":
+        # L3 记忆：从最近一轮 QA 抽取长期记忆条目
+        from app.services.memory import extract_memories
+        from app.services.model_configs import resolve_provider_config
+
+        async with SessionLocal() as db:
+            provider = await resolve_provider_config(db, task.user_id)
+        await extract_memories(uuid.UUID(task.payload["session_id"]), provider)
     elif task.type == "demo_fail":
         # 演示用：恒超时，用于验证"超时 -> 重试 -> 死信"链路
         await asyncio.sleep(1e6)
