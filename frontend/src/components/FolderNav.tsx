@@ -102,7 +102,7 @@ export function FolderNav({ docs, activeFolder, onPickFolder, mapOpen, onToggleM
           type="button"
           onClick={onToggleMap}
           aria-pressed={mapOpen}
-          className="flex w-full cursor-pointer items-center gap-2 rounded-lg px-2.5 py-1.5 text-left text-[13px] transition-colors ${
+          className={`flex w-full cursor-pointer items-center gap-2 rounded-lg px-2.5 py-1.5 text-left text-[13px] transition-colors ${
             mapOpen ? "bg-brand/15 font-medium text-brand-light" : "text-theme-text hover:bg-white/5"
           }`}
         >

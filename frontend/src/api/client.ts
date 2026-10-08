@@ -125,6 +125,14 @@ export async function patch<T>(
   return request(path, schema, { method: "PATCH", body: JSON.stringify(body) });
 }
 
+export async function put<T>(
+  path: string,
+  body: unknown,
+  schema: z.ZodType<T, z.ZodTypeDef, unknown>,
+): Promise<T> {
+  return request(path, schema, { method: "PUT", body: JSON.stringify(body) });
+}
+
 export async function del(path: string): Promise<void> {
   await request(path, z.unknown(), { method: "DELETE" });
 }

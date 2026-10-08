@@ -19,6 +19,17 @@ function RequireAuth({ children }: { children: ReactNode }) {
   return <>{children}</>;
 }
 
+/** 管理区路由守卫：持任一 admin:* 权限点可进入（后端 403 兜底不变） */
+function RequireAdminArea({ children }: { children: ReactNode }) {
+  const { user, loading, hasAnyPermission } = useAuth();
+  if (loading) return null;
+  if (!user) return <Navigate to="/login" replace />;
+  if (!hasAnyPermission("admin:user_manage", "admin:role_manage", "admin:group_manage", "admin:eval")) {
+    return <Navigate to="/" replace />;
+  }
+  return <>{children}</>;
+}
+
 export default function App() {
   return (
     <AuthProvider>
@@ -40,7 +51,7 @@ export default function App() {
               />
               <Route path="/settings/models" element={<RequireAuth><ModelSettingsPage /></RequireAuth>} />
               <Route path="/documents" element={<RequireAuth><DocumentsPage /></RequireAuth>} />
-              <Route path="/admin" element={<RequireAuth><AdminPage /></RequireAuth>} />
+              <Route path="/admin" element={<RequireAdminArea><AdminPage /></RequireAdminArea>} />
               <Route path="/changelog" element={<RequireAuth><ChangelogPage /></RequireAuth>} />
               <Route path="*" element={<Navigate to="/" replace />} />
             </Routes>

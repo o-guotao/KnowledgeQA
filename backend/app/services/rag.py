@@ -12,20 +12,24 @@ import time
 import uuid
 from dataclasses import dataclass
 
-from sqlalchemy import or_, select, text
+from sqlalchemy import select, text
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.config import get_settings
 from app.models.chunk import Chunk
 from app.models.document import Document
+from app.services import authorization as authz
 
 logger = logging.getLogger(__name__)
 
 
-def _visible_to(user_id: uuid.UUID):
-    """召回可见性：本人全部文档 + 全员团队空间文档（需与 Chunk join Document 后使用，
-    并恒与 Document.status == 'ready' 组合）。"""
-    return or_(Chunk.user_id == user_id, Document.visibility == "team")
+async def _visible_to(db: AsyncSession, user_id: uuid.UUID):
+    """召回可见性（统一授权服务条件）：本人文档 + 团队空间 + ACL 授权（个人/用户组继承）。
+
+    需与 Chunk join Document 后使用，并恒与 Document.status == 'ready' 组合。
+    """
+    perms = await authz.get_user_permissions(db, user_id)
+    return authz.visible_document_condition(user_id, perms)
 
 
 @dataclass
@@ -86,11 +90,12 @@ async def _vector_recall(
     db: AsyncSession, user_id: uuid.UUID, query_embedding: list[float], limit: int
 ) -> list[RetrievedChunk]:
     settings = get_settings()
+    visible = await _visible_to(db, user_id)
     if settings.db_backend == "sqlite":
         stmt = (
             select(Chunk, Document.filename)
             .join(Document, Chunk.document_id == Document.id)
-            .where(_visible_to(user_id), Document.status == "ready", Chunk.block_type == "child")
+            .where(visible, Document.status == "ready", Chunk.block_type == "child")
         )
         rows = (await db.execute(stmt)).all()
         scored = [
@@ -106,7 +111,7 @@ async def _vector_recall(
     stmt = (
         select(Chunk, Document.filename, distance)
         .join(Document, Chunk.document_id == Document.id)
-        .where(_visible_to(user_id), Document.status == "ready", Chunk.block_type == "child")
+        .where(visible, Document.status == "ready", Chunk.block_type == "child")
         .order_by(distance)
         .limit(limit)
     )
@@ -136,14 +141,14 @@ async def _bm25_recall(
         return hits
     ids = [cid for cid, _ in hits]
     score_of = dict(hits)
-    # 回填内容与文档名；再次按 user/status 过滤（SQL 侧兜底权限，索引内过滤为性能优化）
+    # 回填内容与文档名；再次按可见性/status 过滤（SQL 侧兜底权限，索引内过滤为性能优化）
     rows = (
         await db.execute(
             select(Chunk, Document.filename)
             .join(Document, Chunk.document_id == Document.id)
             .where(
                 Chunk.id.in_(ids),
-                _visible_to(user_id),
+                await _visible_to(db, user_id),
                 Document.status == "ready",
                 Chunk.block_type == "child",
             )
@@ -180,6 +185,8 @@ async def _keyword_recall_db(
     kws = _keywords(query_text)
     if not kws:
         return []
+    perms = await authz.get_user_permissions(db, user_id)
+    visible_raw = authz.visible_document_raw_sql(perms)
     try:
         if settings.db_backend == "sqlite":
             # SQLite 退化：任一关键词 LIKE 命中即召回，按命中数排序
@@ -194,7 +201,7 @@ async def _keyword_recall_db(
                         SELECT c.id, c.document_id, c.content, d.filename,
                                ({' + '.join(f"(content LIKE :kw{i})" for i in range(len(kws)))}) AS hits
                         FROM chunks c JOIN documents d ON c.document_id = d.id
-                        WHERE (c.user_id = :uid OR d.visibility = 'team')
+                        WHERE {visible_raw}
                           AND d.status = 'ready' AND c.block_type = 'child'
                           AND ({like_clauses})
                         ORDER BY hits DESC, c.created_at DESC
@@ -213,11 +220,11 @@ async def _keyword_recall_db(
         rows = (
             await db.execute(
                 text(
-                    """
+                    f"""
                     SELECT c.id, c.document_id, c.content, d.filename,
                            ts_rank(c.content_tsv, plainto_tsquery('simple', :q)) AS rank
                     FROM chunks c JOIN documents d ON c.document_id = d.id
-                    WHERE (c.user_id = :uid OR d.visibility = 'team')
+                    WHERE {visible_raw}
                       AND d.status = 'ready' AND c.block_type = 'child'
                       AND c.content_tsv @@ plainto_tsquery('simple', :q)
                     ORDER BY rank DESC

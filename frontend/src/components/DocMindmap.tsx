@@ -150,7 +150,7 @@ function layoutTarget(tree: TreeNode, collapsed: Set<string>) {
       cursor += ROW_H;
     } else {
       const ys = n.children.map(walk);
-      y = (ys[0] + ys[ys.length - 1]) / 2;
+      y = ((ys[0] ?? 0) + (ys[ys.length - 1] ?? 0)) / 2;
     }
     pos.set(n.key, { x: 0, y, w });
     return y;
@@ -189,10 +189,10 @@ function MindmapLink({
   child: NodeMv;
   active: boolean;
 }) {
-  const d = useTransform([parent.x, parent.y, child.x, child.y], ([px, py, cx, cy]) => {
-    const x0 = px + parentW;
-    const mx = (x0 + cx) / 2;
-    return `M ${x0} ${py} C ${mx} ${py}, ${mx} ${cy}, ${cx} ${cy}`;
+  const d = useTransform([parent.x, parent.y, child.x, child.y], ([px, py, cx, cy]: number[]) => {
+    const x0 = (px ?? 0) + parentW;
+    const mx = (x0 + (cx ?? 0)) / 2;
+    return `M ${x0} ${py ?? 0} C ${mx} ${py ?? 0}, ${mx} ${cy ?? 0}, ${cx ?? 0} ${cy ?? 0}`;
   });
   return (
     <motion.path

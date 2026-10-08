@@ -28,6 +28,9 @@ class UserOut(BaseModel):
     display_name: str
     role: str
     created_at: datetime
+    # 经角色聚合的权限点与角色名（/auth/me、登录响应附带；注册响应为空）
+    permissions: list[str] = []
+    roles: list[str] = []
 
     model_config = {"from_attributes": True}
 

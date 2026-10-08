@@ -11,6 +11,10 @@ interface AuthState {
   loading: boolean;
   login: (username: string, password: string) => Promise<void>;
   logout: () => void;
+  /** 是否持有指定权限点（经角色聚合，/auth/me 下发） */
+  hasPermission: (code: string) => boolean;
+  /** 是否持有任一指定权限点（路由/入口守卫用） */
+  hasAnyPermission: (...codes: string[]) => boolean;
 }
 
 const AuthContext = createContext<AuthState | null>(null);
@@ -48,9 +52,15 @@ export function AuthProvider({ children }: { children: ReactNode }) {
     setUser(null);
   }, []);
 
+  const hasPermission = useCallback((code: string) => user?.permissions.includes(code) ?? false, [user]);
+  const hasAnyPermission = useCallback(
+    (...codes: string[]) => codes.some((c) => user?.permissions.includes(c)),
+    [user],
+  );
+
   const value = useMemo(
-    () => ({ user, loading, login, logout }),
-    [user, loading, login, logout],
+    () => ({ user, loading, login, logout, hasPermission, hasAnyPermission }),
+    [user, loading, login, logout, hasPermission, hasAnyPermission],
   );
   return <AuthContext.Provider value={value}>{children}</AuthContext.Provider>;
 }
@@ -59,4 +69,9 @@ export function useAuth(): AuthState {
   const ctx = useContext(AuthContext);
   if (!ctx) throw new Error("useAuth 必须在 AuthProvider 内使用");
   return ctx;
+}
+
+/** 权限点驱动显隐：const canShare = usePermission("document:share") */
+export function usePermission(code: string): boolean {
+  return useAuth().hasPermission(code);
 }

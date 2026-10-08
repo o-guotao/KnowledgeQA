@@ -23,7 +23,7 @@ from app.core.pagination import (
     normalize_q,
     paginate,
 )
-from app.core.security import require_admin
+from app.core.security import get_current_user, require_permission
 from app.db import get_db
 from app.logging_config import get_trace_id
 from app.models.eval import EvalDataset, EvalRun, EvalRunItem
@@ -46,7 +46,7 @@ from app.schemas.eval import (
 )
 from app.services.eval_runner import ALL_GROUPS, parse_dataset
 
-router = APIRouter(dependencies=[Depends(require_admin)])
+router = APIRouter(dependencies=[Depends(require_permission("admin:eval"))])
 
 BASE_DIR = Path(__file__).resolve().parents[2]  # backend/
 MAX_DATASET_BYTES = 1 * 1024 * 1024  # 1MB
@@ -166,7 +166,7 @@ async def list_runs(
 async def create_run(
     body: EvalRunCreate,
     db: AsyncSession = Depends(get_db),
-    user: User = Depends(require_admin),
+    user: User = Depends(get_current_user),
 ) -> EvalRunOut:
     """发起评测：eval_runs(pending) + run_eval 任务入队。并发闸：已有在途 run → 409。"""
     dataset = await db.get(EvalDataset, body.dataset_id)

@@ -20,6 +20,7 @@ class AdminUserOut(BaseModel):
     role: str
     created_at: datetime
     month: AdminUserMonth
+    roles: list[str] = []  # 角色名列表（动态 RBAC）
 
 
 class AdminUserCreate(BaseModel):

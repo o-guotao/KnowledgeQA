@@ -157,7 +157,11 @@ export function ModelSettingsPage() {
               </div>
               <div>
                 <p className="text-xs text-theme-sub">角色</p>
-                <div className="mt-1"><Badge variant={user?.role === "admin" ? "default" : "muted"}>{user?.role}</Badge></div>
+                <div className="mt-1 flex flex-wrap gap-1">
+                  {(user?.roles.length ? user.roles : [user?.role ?? ""]).map((r) => (
+                    <Badge key={r} variant={r === "admin" ? "default" : "muted"}>{r}</Badge>
+                  ))}
+                </div>
               </div>
             </div>
             <div className="border-t border-theme-line pt-5">

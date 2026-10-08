@@ -51,7 +51,7 @@ function toDisplayMessages(rows: Message[]): DisplayMessage[] {
 }
 
 export function ChatPage() {
-  const { user, logout } = useAuth();
+  const { user, logout, hasAnyPermission } = useAuth();
   const navigate = useNavigate();
   const location = useLocation();
   const [activeId, setActiveId] = useState<string | null>(null);
@@ -326,7 +326,9 @@ export function ChatPage() {
             { label: "对话", to: "/", icon: MessageSquare },
             { label: "文档库", to: "/documents", icon: Files },
             { label: "模型设置", to: "/settings/models", icon: Settings2 },
-            ...(user?.role === "admin" ? [{ label: "管理后台", to: "/admin", icon: LayoutDashboard }] : []),
+            ...(hasAnyPermission("admin:user_manage", "admin:role_manage", "admin:group_manage", "admin:eval")
+              ? [{ label: "管理后台", to: "/admin", icon: LayoutDashboard }]
+              : []),
             { label: "更新日志", to: "/changelog", icon: History },
           ].map(({ label, to, icon: Icon }) => {
             const active = location.pathname === to;

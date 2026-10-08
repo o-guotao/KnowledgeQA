@@ -25,6 +25,8 @@ from app.db import get_db
 from app.logging_config import get_trace_id
 from app.models.chunk import Chunk
 from app.models.document import Document
+from app.models.document_grant import DocumentGrant
+from app.models.group import Group
 from app.models.task import Task
 from app.models.user import User
 from app.schemas.common import DocumentStats, Page
@@ -37,6 +39,8 @@ from app.schemas.document import (
     DocumentOverview,
     DocumentUpdate,
 )
+from app.schemas.rbac import GrantOut, GrantUpsert
+from app.services import authorization as authz
 from app.services.doc_sync import stale_reasons
 from app.services.storage import delete_object, get_object, put_object
 
@@ -131,25 +135,14 @@ def _to_out(document: Document) -> DocumentOut:
     return out
 
 
-async def _get_owned_document(document_id: uuid.UUID, user: User, db: AsyncSession) -> Document:
+async def _get_writable_document(document_id: uuid.UUID, user: User, db: AsyncSession) -> Document:
+    """取可写文档（owner / write 授权 / team_manage 权限），越权统一 404。"""
     document = (
-        await db.execute(
-            select(Document).where(Document.id == document_id, Document.user_id == user.id)
-        )
+        await db.execute(select(Document).where(Document.id == document_id))
     ).scalar_one_or_none()
-    if document is None:
+    if document is None or not await authz.can_write_document(db, user, document):
         raise not_found("文档")
     return document
-
-
-def _can_read(document: Document, user: User) -> bool:
-    """读授权：owner / admin / 团队空间文档（全部登录用户可检索与预览）。"""
-    return document.user_id == user.id or user.role == "admin" or document.visibility == "team"
-
-
-def _can_write(document: Document, user: User) -> bool:
-    """写授权：owner；admin 仅可管理团队空间文档（取消共享/删除），他人私有文档不碰。"""
-    return document.user_id == user.id or (user.role == "admin" and document.visibility == "team")
 
 
 def _enqueue_ingest(document: Document, user: User, db: AsyncSession) -> None:
@@ -177,6 +170,8 @@ async def upload_document(
     db: AsyncSession = Depends(get_db),
     user: User = Depends(get_current_user),
 ) -> DocumentOut:
+    if "document:create" not in await authz.get_user_permissions(db, user.id):
+        raise AppError("FORBIDDEN", "缺少上传文档权限", 403)
     if visibility not in ("private", "team"):
         raise AppError("BAD_VISIBILITY", "visibility 仅支持 private/team", 400)
     data = await file.read()
@@ -368,6 +363,40 @@ async def list_team_documents(
     return make_page(result, total, params)
 
 
+@router.get("/documents/shared", response_model=Page[DocumentOut])
+async def list_shared_documents(
+    q: str | None = None,
+    params: PageParams = Depends(),
+    db: AsyncSession = Depends(get_db),
+    user: User = Depends(get_current_user),
+) -> Page[DocumentOut]:
+    """共享给我：经 ACL 授权（个人直授或用户组继承）可见的他人文档，附 owner 显示名。"""
+    grant_visible = authz._grant_condition(Document.id, user.id)
+    stmt = (
+        select(Document, User.display_name)
+        .join(User, Document.user_id == User.id)
+        .where(Document.user_id != user.id, grant_visible)
+    )
+    term = normalize_q(q)
+    if term is not None:
+        pattern = like_pattern(term)
+        stmt = stmt.where(
+            or_(
+                Document.filename.ilike(pattern, escape=LIKE_ESCAPE),
+                json_text_search(Document.tags, term),
+                User.display_name.ilike(pattern, escape=LIKE_ESCAPE),
+            )
+        )
+    stmt = stmt.order_by(Document.created_at.desc(), Document.id.desc())
+    rows, total = await paginate(db, stmt, params)
+    result: list[DocumentOut] = []
+    for doc, owner_name in rows:
+        out = _to_out(doc)
+        out.owner_name = owner_name or None
+        result.append(out)
+    return make_page(result, total, params)
+
+
 @router.patch("/documents/{document_id}", response_model=DocumentOut)
 async def update_document(
     document_id: uuid.UUID,
@@ -377,8 +406,9 @@ async def update_document(
 ) -> DocumentOut:
     """更新文档的文件夹/标签/可见性（不触发重新切分）。
 
-    owner 可改全部字段；admin 对他人的 team 文档仅可改 visibility（取消共享）；
-    他人私有文档一律 404（不泄露存在性）。
+    owner 可改全部字段；write 授权持有者可改 folder/tags；
+    team_manage 权限持有者可改他人 team 文档的 visibility（取消共享）；
+    其余一律 404（不泄露存在性）。
     """
     document = (
         await db.execute(select(Document).where(Document.id == document_id))
@@ -386,10 +416,18 @@ async def update_document(
     if document is None:
         raise not_found("文档")
     if document.user_id != user.id:
-        if not (user.role == "admin" and document.visibility == "team"):
+        perms = await authz.get_user_permissions(db, user.id)
+        grant_level = await authz._document_grant_level(db, user.id, document.id)
+        is_team_admin = "document:team_manage" in perms and document.visibility == "team"
+        if grant_level != "write" and not is_team_admin:
             raise not_found("文档")
-        if set(body.model_dump(exclude_unset=True)) - {"visibility"}:
-            raise AppError("FORBIDDEN", "管理员仅可修改团队空间文档的 visibility", 403)
+        allowed: set[str] = set()
+        if grant_level == "write":
+            allowed |= {"folder", "tags"}
+        if is_team_admin:
+            allowed |= {"visibility"}
+        if set(body.model_dump(exclude_unset=True)) - allowed:
+            raise AppError("FORBIDDEN", "当前授权级别不允许修改这些字段", 403)
     if body.folder is not None:
         document.folder = body.folder.strip()[:128]
     if body.tags is not None:
@@ -407,16 +445,18 @@ async def batch_delete_documents(
     db: AsyncSession = Depends(get_db),
     user: User = Depends(get_current_user),
 ) -> BatchDeleteResponse:
-    """批量删除文档：逐个级联删除 chunks 与对象存储，失败的收集返回。"""
+    """批量删除文档：逐个级联删除 chunks 与对象存储，失败的收集返回。
+
+    删除权限同单删：owner / write 授权 / team_manage 权限（团队文档）。
+    """
     deleted = 0
     failed: list[uuid.UUID] = []
+    perms = await authz.get_user_permissions(db, user.id)
     for doc_id in body.document_ids:
         document = (
-            await db.execute(
-                select(Document).where(Document.id == doc_id, Document.user_id == user.id)
-            )
+            await db.execute(select(Document).where(Document.id == doc_id))
         ).scalar_one_or_none()
-        if document is None:
+        if document is None or not await authz.can_write_document(db, user, document, perms):
             failed.append(doc_id)
             continue
         object_key = document.object_key
@@ -440,7 +480,7 @@ async def get_document(
     document = (
         await db.execute(select(Document).where(Document.id == document_id))
     ).scalar_one_or_none()
-    if document is None or not _can_read(document, user):
+    if document is None or not await authz.can_read_document(db, user, document):
         raise not_found("文档")
     return _to_out(document)
 
@@ -459,7 +499,7 @@ async def update_document_content(
     - 处理中（uploaded/processing）：409，避免与在途 ingest 竞争
     - 新内容为纯图片 PDF：no_text 终态，旧切块同事务内联清空
     """
-    document = await _get_owned_document(document_id, user, db)
+    document = await _get_writable_document(document_id, user, db)
     if document.status in ("uploaded", "processing"):
         raise AppError("DOCUMENT_PROCESSING", "文档正在处理中，请稍后重试", 409)
 
@@ -479,7 +519,7 @@ async def update_document_content(
         await db.execute(
             select(Document.filename)
             .where(
-                Document.user_id == user.id,
+                Document.user_id == document.user_id,
                 Document.content_hash == content_hash,
                 Document.id != document.id,
             )
@@ -493,7 +533,7 @@ async def update_document_content(
     status = _detect_status(filename, data)
 
     old_object_key = document.object_key
-    document.object_key = f"{user.id}/{document.id}/{filename}"
+    document.object_key = f"{document.user_id}/{document.id}/{filename}"
     await put_object(document.object_key, data)
 
     document.filename = filename
@@ -543,7 +583,7 @@ async def reingest_document(
     被误判为 no_text，允许 pdf/docx/xlsx 重切（worker 全量提取，仍无文本则落 failed）；
     图片文件（png/jpg/webp）无文字层是确定的，仍拒绝。
     """
-    document = await _get_owned_document(document_id, user, db)
+    document = await _get_writable_document(document_id, user, db)
     if document.status == "no_text" and document.filename.lower().endswith(IMAGE_EXTENSIONS):
         raise AppError("NOT_INGESTABLE", "图片文件无文字层，不可切分，无法检索", 400)
     if document.status in ("uploaded", "processing"):
@@ -568,7 +608,11 @@ async def get_document_file(
     document = (
         await db.execute(select(Document).where(Document.id == document_id))
     ).scalar_one_or_none()
-    if document is None or not document.object_key or not _can_read(document, user):
+    if (
+        document is None
+        or not document.object_key
+        or not await authz.can_read_document(db, user, document)
+    ):
         raise not_found("文档")
     try:
         data = await get_object(document.object_key)
@@ -597,7 +641,7 @@ async def delete_document(
     document = (
         await db.execute(select(Document).where(Document.id == document_id))
     ).scalar_one_or_none()
-    if document is None or not _can_write(document, user):
+    if document is None or not await authz.can_write_document(db, user, document):
         raise not_found("文档")
 
     # 取消该文档尚未完成的入库任务（best-effort：按 payload 匹配，兼容 admin 删他人文档）
@@ -642,7 +686,7 @@ async def get_chunk(
             .where(Chunk.id == chunk_id)
         )
     ).one_or_none()
-    if row is None or not _can_read(row[1], user):
+    if row is None or not await authz.can_read_document(db, user, row[1]):
         raise not_found("引用内容")
     chunk, document = row
     filename = document.filename
@@ -658,3 +702,110 @@ async def get_chunk(
             select(Document.chunk_count).where(Document.id == chunk.document_id)
         )) or 0,
     )
+
+
+# ---------- 文档级 ACL 授权 ----------
+
+
+async def _get_shareable_document(
+    document_id: uuid.UUID, user: User, db: AsyncSession
+) -> Document:
+    """取可管理授权的文档（owner 或持 document:share 且可写），越权统一 404。"""
+    document = (
+        await db.execute(select(Document).where(Document.id == document_id))
+    ).scalar_one_or_none()
+    if document is None or not await authz.can_share_document(db, user, document):
+        raise not_found("文档")
+    return document
+
+
+async def _grant_out(db: AsyncSession, grant: DocumentGrant) -> GrantOut:
+    name = ""
+    if grant.grantee_type == "user":
+        row = (
+            await db.execute(
+                select(User.username, User.display_name).where(User.id == grant.grantee_id)
+            )
+        ).one_or_none()
+        if row is not None:
+            name = row[1] or row[0]
+    else:
+        name = (
+            await db.execute(select(Group.name).where(Group.id == grant.grantee_id))
+        ).scalar_one_or_none() or ""
+    return GrantOut(
+        id=grant.id,
+        grantee_type=grant.grantee_type,
+        grantee_id=grant.grantee_id,
+        grantee_name=name,
+        permission=grant.permission,
+        created_at=grant.created_at,
+    )
+
+
+@router.get("/documents/{document_id}/grants", response_model=list[GrantOut])
+async def list_document_grants(
+    document_id: uuid.UUID,
+    db: AsyncSession = Depends(get_db),
+    user: User = Depends(get_current_user),
+) -> list[GrantOut]:
+    """文档授权清单：owner / 可分享者可见。"""
+    document = await _get_shareable_document(document_id, user, db)
+    grants = (
+        await db.execute(
+            select(DocumentGrant)
+            .where(DocumentGrant.document_id == document.id)
+            .order_by(DocumentGrant.created_at.asc())
+        )
+    ).scalars().all()
+    return [await _grant_out(db, g) for g in grants]
+
+
+@router.put("/documents/{document_id}/grants", response_model=GrantOut)
+async def upsert_document_grant(
+    document_id: uuid.UUID,
+    body: GrantUpsert,
+    db: AsyncSession = Depends(get_db),
+    user: User = Depends(get_current_user),
+) -> GrantOut:
+    """授予/更新权限：同一被授权方仅一条记录，write 覆盖 read。不允许授权给 owner 本人。"""
+    document = await _get_shareable_document(document_id, user, db)
+    if body.grantee_type == "user":
+        if body.grantee_id == document.user_id:
+            raise AppError("BAD_GRANTEE", "文档所有者无需授权", 400)
+        target = (
+            await db.execute(select(User.id).where(User.id == body.grantee_id))
+        ).scalar_one_or_none()
+    else:
+        target = (
+            await db.execute(select(Group.id).where(Group.id == body.grantee_id))
+        ).scalar_one_or_none()
+    if target is None:
+        raise not_found("用户" if body.grantee_type == "user" else "用户组")
+    grant = await authz.upsert_document_grant(
+        db, document.id, body.grantee_type, body.grantee_id, body.permission, user.id
+    )
+    await db.commit()
+    return await _grant_out(db, grant)
+
+
+@router.delete("/documents/{document_id}/grants/{grant_id}", status_code=204)
+async def delete_document_grant(
+    document_id: uuid.UUID,
+    grant_id: uuid.UUID,
+    db: AsyncSession = Depends(get_db),
+    user: User = Depends(get_current_user),
+) -> None:
+    """撤销授权。"""
+    document = await _get_shareable_document(document_id, user, db)
+    grant = (
+        await db.execute(
+            select(DocumentGrant).where(
+                DocumentGrant.id == grant_id, DocumentGrant.document_id == document.id
+            )
+        )
+    ).scalar_one_or_none()
+    if grant is None:
+        raise not_found("授权记录")
+    await db.delete(grant)
+    await db.commit()

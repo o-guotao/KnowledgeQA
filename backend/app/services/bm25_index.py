@@ -18,11 +18,14 @@ import re
 import uuid
 from dataclasses import dataclass
 
-from sqlalchemy import func, select
+from sqlalchemy import and_, func, or_, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.models.chunk import Chunk
 from app.models.document import Document
+from app.models.document_grant import DocumentGrant
+from app.models.group import GroupMember
+from app.services import authorization as authz
 
 logger = logging.getLogger(__name__)
 
@@ -56,6 +59,8 @@ class _Index:
     bm25: "BM25Okapi"
     chunk_ids: list[uuid.UUID]
     user_ids: list[uuid.UUID]
+    # 块所属文档 id：ACL 授权过滤用（授权按文档粒度，查询时实时取用户被授权文档集合）
+    doc_ids: list[uuid.UUID]
     # 团队空间标记：team 文档的块对全部登录用户可见（与 owner 过滤并联）
     team_flags: list[bool]
     fingerprint: tuple[int, object, int]
@@ -84,14 +89,15 @@ async def _fingerprint(db: AsyncSession) -> tuple[int, object, int]:
 
 
 def _build(
-    rows: list[tuple[uuid.UUID, uuid.UUID, str, str]], fingerprint: tuple[int, object, int]
+    rows: list[tuple[uuid.UUID, uuid.UUID, uuid.UUID, str, str]], fingerprint: tuple[int, object, int]
 ) -> _Index:
-    corpus = [_tokenize(content) for _, _, content, _ in rows]
+    corpus = [_tokenize(content) for _, _, _, content, _ in rows]
     return _Index(
         bm25=BM25Okapi(corpus),
         chunk_ids=[r[0] for r in rows],
         user_ids=[r[1] for r in rows],
-        team_flags=[r[3] == "team" for r in rows],
+        doc_ids=[r[2] for r in rows],
+        team_flags=[r[4] == "team" for r in rows],
         fingerprint=fingerprint,
     )
 
@@ -110,12 +116,14 @@ async def _ensure_index(db: AsyncSession) -> _Index | None:
             return _state
         rows = (
             await db.execute(
-                select(Chunk.id, Chunk.user_id, Chunk.content, Document.visibility)
+                select(Chunk.id, Chunk.user_id, Chunk.document_id, Chunk.content, Document.visibility)
                 .join(Document, Chunk.document_id == Document.id)
                 .where(Chunk.block_type == "child")
             )
         ).all()
-        state = await asyncio.to_thread(_build, [(r[0], r[1], r[2], r[3]) for r in rows], fp)
+        state = await asyncio.to_thread(
+            _build, [(r[0], r[1], r[2], r[3], r[4]) for r in rows], fp
+        )
         _state = state
         logger.info(
             "bm25 index rebuilt: %d chunks",
@@ -138,6 +146,30 @@ async def search(
     query_tokens = await asyncio.to_thread(_tokenize, query_text)
     if not query_tokens or not state.chunk_ids:
         return []
+    # 可见性：read_all 权限全量可见；否则 owner + 团队空间 + ACL 授权文档（个人/组继承）
+    perms = await authz.get_user_permissions(db, user_id)
+    if "document:read_all" in perms:
+        granted: set[uuid.UUID] | None = None  # None 表示不过滤
+    else:
+        group_ids = select(GroupMember.group_id).where(GroupMember.user_id == user_id)
+        granted = set(
+            (
+                await db.execute(
+                    select(DocumentGrant.document_id).where(
+                        or_(
+                            and_(
+                                DocumentGrant.grantee_type == "user",
+                                DocumentGrant.grantee_id == user_id,
+                            ),
+                            and_(
+                                DocumentGrant.grantee_type == "group",
+                                DocumentGrant.grantee_id.in_(group_ids),
+                            ),
+                        )
+                    )
+                )
+            ).scalars().all()
+        )
     scores = await asyncio.to_thread(state.bm25.get_scores, query_tokens)
     # 全局候选放大 10 倍再按用户过滤，避免 top 全是他人文档导致召回缺失
     candidate_n = min(len(state.chunk_ids), limit * 10)
@@ -147,7 +179,11 @@ async def search(
         score = float(scores[i])
         if score <= 0:
             break  # 降序排列，后续都是 0 分（未命中任何查询词）
-        if state.user_ids[i] != user_id and not state.team_flags[i]:
+        if granted is not None and (
+            state.user_ids[i] != user_id
+            and not state.team_flags[i]
+            and state.doc_ids[i] not in granted
+        ):
             continue
         hits.append((state.chunk_ids[i], round(score, 4)))
         if len(hits) >= limit:

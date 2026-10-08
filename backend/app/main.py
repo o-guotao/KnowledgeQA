@@ -56,6 +56,14 @@ async def _startup_checks() -> None:
         await seed()
         logging.getLogger(__name__).info("sqlite mode: tables created + seeded")
 
+    # RBAC 目录同步：权限点/内置角色 upsert + 无角色用户回填（幂等；
+    # PG 走迁移 0016 已初始化，此处保持代码常量与表一致；sqlite 靠此完成初始化）
+    from app.db import SessionLocal
+    from app.services.authorization import sync_rbac_catalog
+
+    async with SessionLocal() as rbac_db:
+        await sync_rbac_catalog(rbac_db)
+
     from app.services.embeddings import verify_embedding_ready
 
     ok, message = await verify_embedding_ready()

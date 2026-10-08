@@ -1,20 +1,23 @@
-import { ArrowLeft, Cpu, FlaskConical, Loader2, Pencil, Plus, Save, Trash2, TrendingUp, Users, X } from "lucide-react";
+import { ArrowLeft, Cpu, FlaskConical, Loader2, Pencil, Plus, Save, ShieldCheck, Trash2, TrendingUp, Users, UsersRound, X } from "lucide-react";
 import { lazy, Suspense, useCallback, useEffect, useMemo, useState } from "react";
 import { useNavigate } from "react-router-dom";
 import { z } from "zod";
 
-import { del, get, patch, post, withQuery } from "../api/client";
+import { del, get, patch, post, put, withQuery } from "../api/client";
 import {
   AdminUserSchema,
   DailyUsageSchema,
   ModelUsageSchema,
+  RoleSchema,
   UserUsageSchema,
   pageSchema,
   type AdminUser,
   type DailyUsage,
   type ModelUsage,
+  type Role,
   type UserUsage,
 } from "../api/schemas";
+import { useAuth } from "../auth/AuthContext";
 import { Button } from "../components/ui/button";
 import { Card, CardContent, CardHeader, CardTitle } from "../components/ui/card";
 import { ConfirmDialog } from "../components/ConfirmDialog";
@@ -29,13 +32,36 @@ const fmtCost = (n: number) => `¥${n.toFixed(4)}`;
 
 // 评测中心（含 recharts）懒加载：独立 chunk，不进主包首屏
 const EvalCenterTab = lazy(() => import("./admin/EvalCenterTab"));
+const RolesTab = lazy(() => import("./admin/RolesTab"));
+const GroupsTab = lazy(() => import("./admin/GroupsTab"));
 
-type Draft = { username: string; password: string; display_name: string; role: string; limit_tokens: string };
-const emptyDraft = (): Draft => ({ username: "", password: "", display_name: "", role: "user", limit_tokens: "" });
+type TabKey = "usage" | "eval" | "roles" | "groups";
+
+type Draft = { username: string; password: string; display_name: string; role: string; limit_tokens: string; roleIds: string[] };
+const emptyDraft = (): Draft => ({ username: "", password: "", display_name: "", role: "user", limit_tokens: "", roleIds: [] });
 
 export function AdminPage() {
   const navigate = useNavigate();
-  const [tab, setTab] = useState<"usage" | "eval">("usage");
+  const { hasPermission } = useAuth();
+  const canUserManage = hasPermission("admin:user_manage");
+  const canEval = hasPermission("admin:eval");
+  const canRoleManage = hasPermission("admin:role_manage");
+  const canGroupManage = hasPermission("admin:group_manage");
+  const visibleTabs = useMemo(
+    () =>
+      ([
+        ["usage", "用量与用户", Users, canUserManage],
+        ["eval", "评测中心", FlaskConical, canEval],
+        ["roles", "角色权限", ShieldCheck, canRoleManage],
+        ["groups", "用户组", UsersRound, canGroupManage],
+      ] as const).filter(([, , , allowed]) => allowed),
+    [canUserManage, canEval, canRoleManage, canGroupManage],
+  );
+  const [tab, setTab] = useState<TabKey>(visibleTabs[0]?.[0] ?? "usage");
+  // 权限不含当前 tab 时回退到第一个可用 tab
+  useEffect(() => {
+    if (!visibleTabs.some(([key]) => key === tab)) setTab(visibleTabs[0]?.[0] ?? "usage");
+  }, [visibleTabs, tab]);
   const [daily, setDaily] = useState<DailyUsage[]>([]);
   const [roleFilter, setRoleFilter] = useState<string>("");
   const [error, setError] = useState<string | null>(null);
@@ -68,9 +94,17 @@ export function AdminPage() {
 
   // 按日用量是时间序列（图表数据源），保留 days 窗口、不做分页（见任务 prd 例外项）
   const refreshDaily = useCallback(() => {
+    if (!canUserManage) return;
     get("/admin/usage/daily?days=30", z.array(DailyUsageSchema)).then(setDaily).catch(() => {});
-  }, []);
+  }, [canUserManage]);
   useEffect(() => { refreshDaily(); }, [refreshDaily]);
+
+  // 角色目录：编辑用户时做角色分配勾选项（user_manage / role_manage 均可读）
+  const [roleCatalog, setRoleCatalog] = useState<Role[]>([]);
+  useEffect(() => {
+    if (!canUserManage) return;
+    get("/admin/roles", z.array(RoleSchema)).then(setRoleCatalog).catch(() => {});
+  }, [canUserManage]);
 
   const users = usersQuery.items;
   const byUser = byUserQuery.items;
@@ -95,10 +129,13 @@ export function AdminPage() {
       if (editingId) {
         const body: Record<string, unknown> = {};
         if (draft.display_name) body.display_name = draft.display_name;
-        if (draft.role) body.role = draft.role;
         if (draft.password) body.password = draft.password;
         if (draft.limit_tokens) body.limit_tokens = Number(draft.limit_tokens);
-        await patch(`/admin/users/${editingId}`, body, AdminUserSchema);
+        if (Object.keys(body).length > 0) {
+          await patch(`/admin/users/${editingId}`, body, AdminUserSchema);
+        }
+        // 角色整体替换（动态 RBAC，替代旧 role 下拉）
+        await put(`/admin/users/${editingId}/roles`, { role_ids: draft.roleIds }, z.array(RoleSchema));
         setMessage("用户已更新");
       } else {
         await post(
@@ -115,8 +152,12 @@ export function AdminPage() {
 
   const edit = (u: AdminUser) => {
     setEditingId(u.id);
-    setDraft({ username: u.username, password: "", display_name: u.display_name, role: u.role, limit_tokens: String(u.month.limit_tokens) });
+    setDraft({ username: u.username, password: "", display_name: u.display_name, role: u.role, limit_tokens: String(u.month.limit_tokens), roleIds: [] });
     setError(null); setMessage(null);
+    // 拉取该用户当前角色 id 用于勾选回填
+    get(`/admin/users/${u.id}/roles`, z.array(RoleSchema))
+      .then((roles) => setDraft((prev) => (prev.username === u.username ? { ...prev, roleIds: roles.map((r) => r.id) } : prev)))
+      .catch(() => {});
     window.scrollTo({ top: 0, behavior: "smooth" });
   };
 
@@ -148,9 +189,9 @@ export function AdminPage() {
           <div role="status" className={`rounded-lg border px-4 py-3 text-sm ${error ? "border-red-200 bg-red-50 text-red-700" : "border-emerald-200 bg-emerald-50 text-emerald-700"}`}>{error ?? message}</div>
         )}
 
-        {/* Tab：用量与用户 | 评测中心 */}
+        {/* Tab：用量与用户 | 评测中心 | 角色权限 | 用户组（按权限点显隐） */}
         <div className="flex gap-1 border-b border-theme-line">
-          {([["usage", "用量与用户", Users], ["eval", "评测中心", FlaskConical]] as const).map(([key, label, Icon]) => (
+          {visibleTabs.map(([key, label, Icon]) => (
             <button
               key={key}
               type="button"
@@ -165,13 +206,25 @@ export function AdminPage() {
           ))}
         </div>
 
-        {tab === "eval" && (
+        {tab === "eval" && canEval && (
           <Suspense fallback={<div className="flex justify-center py-16"><Loader2 className="animate-spin text-theme-sub" size={22} /></div>}>
             <EvalCenterTab />
           </Suspense>
         )}
 
-        {tab === "usage" && (
+        {tab === "roles" && canRoleManage && (
+          <Suspense fallback={<div className="flex justify-center py-16"><Loader2 className="animate-spin text-theme-sub" size={22} /></div>}>
+            <RolesTab />
+          </Suspense>
+        )}
+
+        {tab === "groups" && canGroupManage && (
+          <Suspense fallback={<div className="flex justify-center py-16"><Loader2 className="animate-spin text-theme-sub" size={22} /></div>}>
+            <GroupsTab />
+          </Suspense>
+        )}
+
+        {tab === "usage" && canUserManage && (
         <>
         <section className="grid gap-4 sm:grid-cols-3">
           {[
@@ -257,11 +310,39 @@ export function AdminPage() {
             <label className="space-y-1.5 text-sm font-medium">用户名<Input value={draft.username} disabled={!!editingId} onChange={(e) => setDraft({ ...draft, username: e.target.value })} /></label>
             <label className="space-y-1.5 text-sm font-medium">显示名<Input value={draft.display_name} onChange={(e) => setDraft({ ...draft, display_name: e.target.value })} /></label>
             <label className="space-y-1.5 text-sm font-medium">密码<Input type="password" autoComplete="off" placeholder={editingId ? "留空不修改" : ""} value={draft.password} onChange={(e) => setDraft({ ...draft, password: e.target.value })} /></label>
-            <label className="space-y-1.5 text-sm font-medium">角色
-              <select className="w-full rounded-md border border-input border-theme-line bg-theme-input px-3 py-2 text-sm" value={draft.role} onChange={(e) => setDraft({ ...draft, role: e.target.value })}>
-                <option value="user">user</option><option value="admin">admin</option>
-              </select>
-            </label>
+            {!editingId && (
+              <label className="space-y-1.5 text-sm font-medium">角色
+                <select className="w-full rounded-md border border-input border-theme-line bg-theme-input px-3 py-2 text-sm" value={draft.role} onChange={(e) => setDraft({ ...draft, role: e.target.value })}>
+                  <option value="user">user</option><option value="admin">admin</option>
+                </select>
+              </label>
+            )}
+            {editingId && (
+              <fieldset className="space-y-1.5 text-sm font-medium sm:col-span-2">角色（可多选）
+                <div className="flex flex-wrap gap-2">
+                  {roleCatalog.map((r) => {
+                    const checked = draft.roleIds.includes(r.id);
+                    return (
+                      <label key={r.id} className={`flex cursor-pointer items-center gap-1.5 rounded-lg border px-2.5 py-1.5 text-xs transition-colors ${checked ? "border-brand/50 bg-brand/10 text-theme-text" : "border-theme-line text-theme-sub hover:text-theme-text"}`}>
+                        <input
+                          type="checkbox"
+                          className="accent-brand"
+                          checked={checked}
+                          onChange={() =>
+                            setDraft({
+                              ...draft,
+                              roleIds: checked ? draft.roleIds.filter((id) => id !== r.id) : [...draft.roleIds, r.id],
+                            })
+                          }
+                        />
+                        {r.name}
+                      </label>
+                    );
+                  })}
+                  {roleCatalog.length === 0 && <span className="text-xs text-theme-sub">角色目录加载中…</span>}
+                </div>
+              </fieldset>
+            )}
             {editingId && <label className="space-y-1.5 text-sm font-medium">当月配额(tokens)<Input type="number" min="0" value={draft.limit_tokens} onChange={(e) => setDraft({ ...draft, limit_tokens: e.target.value })} /></label>}
             <div className="flex gap-2 sm:col-span-2 lg:col-span-5">
               <Button disabled={saving || (!editingId && (!draft.username || !draft.password))} onClick={() => void save()}>
@@ -300,7 +381,13 @@ export function AdminPage() {
                 {users.map((u) => (
                   <tr key={u.id} className="border-b border-slate-50 last:border-0">
                     <td className="px-4 py-3"><div className="font-medium text-theme-text">{u.username}</div>{u.display_name && <div className="text-xs text-theme-sub">{u.display_name}</div>}</td>
-                    <td className="px-4 py-3"><span className={`rounded-full px-2 py-0.5 text-xs ${u.role === "admin" ? "bg-brand/10 text-brand" : "bg-slate-100 text-slate-600"}`}>{u.role}</span></td>
+                    <td className="px-4 py-3">
+                      <div className="flex flex-wrap gap-1">
+                        {(u.roles.length ? u.roles : [u.role]).map((r) => (
+                          <span key={r} className={`rounded-full px-2 py-0.5 text-xs ${r === "admin" ? "bg-brand/10 text-brand" : "bg-slate-100 text-slate-600"}`}>{r}</span>
+                        ))}
+                      </div>
+                    </td>
                     <td className="px-4 py-3 text-right">{fmtTokens(u.month.total_tokens)}</td>
                     <td className="px-4 py-3 text-right">{fmtCost(u.month.cost_cny)}</td>
                     <td className="px-4 py-3 text-right text-slate-500">{fmtTokens(u.month.limit_tokens)}</td>

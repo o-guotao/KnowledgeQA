@@ -1,4 +1,4 @@
-import { ArrowLeft, Eye, FileSpreadsheet, FileText, FileUp, Image as ImageIcon, Layers, Loader2, Quote, RefreshCw, Share2, Trash2, Users, X } from "lucide-react";
+import { ArrowLeft, Eye, FileSpreadsheet, FileText, FileUp, Image as ImageIcon, Layers, Loader2, Quote, RefreshCw, Share2, Trash2, UserPlus, Users, X } from "lucide-react";
 import { useCallback, useEffect, useRef, useState } from "react";
 import { useNavigate } from "react-router-dom";
 import { z } from "zod";
@@ -16,7 +16,9 @@ import {
 } from "../api/schemas";
 import { useAuth } from "../auth/AuthContext";
 import { ConfirmDialog } from "../components/ConfirmDialog";
+import { UNGROUPED } from "../components/DocMindmap";
 import { DocumentPreviewModal, docKind } from "../components/DocumentPreviewModal";
+import { ShareDialog } from "../components/ShareDialog";
 import { FolderNav } from "../components/FolderNav";
 import { ThemeToggle } from "../components/ThemeToggle";
 import { Badge } from "../components/ui/badge";
@@ -98,8 +100,11 @@ function fmtTime(iso: string): string {
 /** 上传文档 + 切分状态管理（独立菜单页）。仅当存在排队/切分中的文档时才轮询。 */
 export function DocumentsPage() {
   const navigate = useNavigate();
-  const { user } = useAuth();
-  const [tab, setTab] = useState<"mine" | "team">("mine");
+  const { hasPermission } = useAuth();
+  const canShare = hasPermission("document:share");
+  const canTeamManage = hasPermission("document:team_manage");
+  const [tab, setTab] = useState<"mine" | "team" | "shared">("mine");
+  const [aclTarget, setAclTarget] = useState<KnowledgeDocument | null>(null);
   const [shareTogglingId, setShareTogglingId] = useState<string | null>(null);
   const [shareTeam, setShareTeam] = useState(false);
   const [queue, setQueue] = useState<PendingFile[]>([]);
@@ -130,9 +135,15 @@ export function DocumentsPage() {
     useCallback((params) => get(withQuery("/documents/team", params), pageSchema(DocumentSchema)), []),
     { pageSize: 10, enabled: tab === "team" },
   );
+  // 共享给我：ACL 授权（个人/用户组继承）可见的他人文档
+  const sharedQuery = usePaginatedQuery<KnowledgeDocument>(
+    useCallback((params) => get(withQuery("/documents/shared", params), pageSchema(DocumentSchema)), []),
+    { pageSize: 10, enabled: tab === "shared" },
+  );
 
   const docs = docsQuery.items;
   const teamDocs = teamQuery.items;
+  const sharedDocs = sharedQuery.items;
   const setDocs = docsQuery.setItems;
   const setTeamDocs = teamQuery.setItems;
   const refreshTeam = teamQuery.refresh;
@@ -324,6 +335,7 @@ export function DocumentsPage() {
       await del(`/documents/${doc.id}`);
       setDocs((prev) => prev.filter((d) => d.id !== doc.id));
       setTeamDocs((prev) => prev.filter((d) => d.id !== doc.id));
+      sharedQuery.setItems((prev) => prev.filter((d) => d.id !== doc.id));
       setSelected((prev) => {
         const next = new Set(prev);
         next.delete(doc.id);
@@ -425,9 +437,9 @@ export function DocumentsPage() {
           </div>
         </header>
 
-        {/* 空间切换：我的文档 | 团队空间 */}
+        {/* 空间切换：我的文档 | 团队空间 | 共享给我 */}
         <div className="flex gap-1 border-b border-theme-line">
-          {([["mine", "我的文档"], ["team", "团队空间"]] as const).map(([key, label]) => (
+          {([["mine", "我的文档"], ["team", "团队空间"], ["shared", "共享给我"]] as const).map(([key, label]) => (
             <button
               key={key}
               type="button"
@@ -751,6 +763,18 @@ export function DocumentsPage() {
                       >
                         <FileUp size={15} />
                       </Button>
+                      {canShare && (
+                        <Button
+                          variant="ghost"
+                          size="icon"
+                          aria-label={`授权 ${d.filename} 给用户或用户组`}
+                          title="授权给指定用户 / 用户组（可读 / 可写）"
+                          onClick={() => setAclTarget(d)}
+                          className="shrink-0 cursor-pointer text-theme-sub hover:bg-brand/15 hover:text-brand-light"
+                        >
+                          <UserPlus size={15} />
+                        </Button>
+                      )}
                       <Button
                         variant="ghost"
                         size="icon"
@@ -859,7 +883,7 @@ export function DocumentsPage() {
                       >
                         <Eye size={15} />
                       </Button>
-                      {user?.role === "admin" && (
+                      {canTeamManage && (
                         <>
                           <Button
                             variant="ghost"
@@ -899,12 +923,81 @@ export function DocumentsPage() {
         </>
         )}
 
+        {tab === "shared" && (
+        <>
+        <p className="max-w-3xl text-sm leading-6 text-theme-sub">
+          其他用户通过授权共享给你的文档（含你所在用户组继承的授权），可检索与预览；可写授权还可更新内容。
+        </p>
+        <section className="space-y-3">
+          <SearchInput
+            value={sharedQuery.query}
+            onChange={sharedQuery.setQuery}
+            placeholder="搜索文件名 / 标签 / 共享人"
+            ariaLabel="搜索共享给我的文档"
+            className="w-full sm:max-w-sm"
+          />
+          {sharedQuery.error && <p className="text-sm text-red-400">共享列表加载失败：{sharedQuery.error}</p>}
+          {sharedDocs.length === 0 ? (
+            <div className="flex flex-col items-center rounded-2xl border border-dashed border-theme-line bg-theme-card/60 px-6 py-16 text-center">
+              <div className="flex h-12 w-12 items-center justify-center rounded-xl bg-brand/15 text-brand-light">
+                <UserPlus size={22} />
+              </div>
+              <p className="mt-5 font-medium text-theme-text">{sharedQuery.query !== "" ? "没有匹配的共享文档" : "还没有人共享文档给你"}</p>
+              <p className="mt-1 text-sm text-theme-sub">{sharedQuery.query !== "" ? "换个关键词试试" : "文档所有者在「我的文档」中点击授权按钮，即可把文档共享给你或你所在的用户组"}</p>
+            </div>
+          ) : (
+            sharedDocs.map((d) => {
+              const meta = STATUS_META[d.status];
+              return (
+                <Card key={d.id} className="transition-shadow hover:shadow-card">
+                  <CardContent className="flex flex-col gap-2 py-4 sm:flex-row sm:items-center sm:justify-between">
+                    <div className="min-w-0">
+                      <div className="flex flex-wrap items-center gap-2">
+                        <FileTypeIcon name={d.filename} />
+                        <p className="truncate font-medium text-theme-text">{d.filename}</p>
+                        <Badge variant={meta.variant}>{meta.label}</Badge>
+                        {d.owner_name && (
+                          <span className="rounded bg-brand/15 px-1.5 py-0.5 text-xs text-brand-light">
+                            {d.owner_name}
+                          </span>
+                        )}
+                      </div>
+                      <p className="mt-1 text-xs text-theme-sub">
+                        {fmtTime(d.created_at)}
+                        {d.status === "ready" && ` · ${d.chunk_count} 个切块`}
+                      </p>
+                    </div>
+                    <div className="flex shrink-0 items-center gap-3">
+                      <Button
+                        variant="ghost"
+                        size="icon"
+                        aria-label={`预览 ${d.filename}`}
+                        onClick={() => setPreview(d)}
+                        className="shrink-0 cursor-pointer text-theme-sub hover:bg-white/10 hover:text-theme-sub"
+                      >
+                        <Eye size={15} />
+                      </Button>
+                    </div>
+                  </CardContent>
+                </Card>
+              );
+            })
+          )}
+          <Pagination page={sharedQuery.page} pages={sharedQuery.pages} total={sharedQuery.total} onPageChange={sharedQuery.setPage} disabled={sharedQuery.loading} />
+        </section>
+        </>
+        )}
+
         {preview && (
           <DocumentPreviewModal
             key={preview.id}
             document={preview}
             onClose={() => setPreview(null)}
           />
+        )}
+
+        {aclTarget && (
+          <ShareDialog document={aclTarget} onClose={() => setAclTarget(null)} />
         )}
 
         <ConfirmDialog

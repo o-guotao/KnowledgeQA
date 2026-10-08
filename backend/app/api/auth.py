@@ -16,10 +16,20 @@ from app.core.security import (
     verify_password,
 )
 from app.db import get_db
+from app.models.rbac import Role, UserRole
 from app.models.user import User
 from app.schemas.auth import LoginRequest, PasswordChange, RegisterRequest, TokenResponse, UserOut
+from app.services.authorization import get_user_permissions, get_user_role_names
 
 router = APIRouter()
+
+
+async def _user_out(db: AsyncSession, user: User) -> UserOut:
+    """序列化用户并附带角色聚合的权限点（前端按权限点驱动显隐）。"""
+    out = UserOut.model_validate(user)
+    out.permissions = sorted(await get_user_permissions(db, user.id))
+    out.roles = await get_user_role_names(db, user.id)
+    return out
 
 # 进程内滑动窗口限流（单实例部署按 IP 计数；多实例部署需换 Redis 等共享存储）。
 # 防脚本批量注册刷库、用户名枚举与口令爆破。
@@ -70,7 +80,7 @@ async def login(
         secure=settings.environment == "production",
         path="/",
     )
-    return TokenResponse(access_token=token, user=UserOut.model_validate(user))
+    return TokenResponse(access_token=token, user=await _user_out(db, user))
 
 
 @router.post("/auth/logout", status_code=204)
@@ -80,8 +90,11 @@ async def logout(response: Response) -> None:
 
 
 @router.get("/auth/me", response_model=UserOut)
-async def me(user: User = Depends(get_current_user)) -> UserOut:
-    return UserOut.model_validate(user)
+async def me(
+    db: AsyncSession = Depends(get_db),
+    user: User = Depends(get_current_user),
+) -> UserOut:
+    return await _user_out(db, user)
 
 
 @router.post("/auth/change-password", status_code=204)
@@ -142,6 +155,12 @@ async def register(body: RegisterRequest, request: Request, db: AsyncSession = D
     db.add(user)
     try:
         await db.flush()
+        # 分配内置 user 角色（启动时 sync_rbac_catalog 已保证存在；异常时不阻断注册）
+        default_role = (
+            await db.execute(select(Role).where(Role.name == "user"))
+        ).scalar_one_or_none()
+        if default_role is not None:
+            db.add(UserRole(user_id=user.id, role_id=default_role.id))
         await db.commit()
     except IntegrityError:
         # 并发注册兜底：username 唯一索引拦下，翻译为用户可读 409（与上传判重同模式）

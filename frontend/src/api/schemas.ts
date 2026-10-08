@@ -48,6 +48,9 @@ export const UserSchema = z.object({
   display_name: z.string(),
   role: z.string(),
   created_at: z.string(),
+  // 经角色聚合的权限点与角色名（RBAC）；旧后端无此字段时兜底空数组
+  permissions: z.array(z.string()).default([]),
+  roles: z.array(z.string()).default([]),
 });
 export type User = z.infer<typeof UserSchema>;
 
@@ -270,8 +273,60 @@ export const AdminUserSchema = z.object({
   role: z.string(),
   created_at: z.string(),
   month: AdminUserMonthSchema,
+  roles: z.array(z.string()).default([]),
 });
 export type AdminUser = z.infer<typeof AdminUserSchema>;
+
+// ---------- RBAC：权限点 / 角色 / 用户组 / 文档授权 ----------
+export const PermissionSchema = z.object({
+  code: z.string(),
+  description: z.string(),
+});
+export type Permission = z.infer<typeof PermissionSchema>;
+
+export const RoleSchema = z.object({
+  id: z.string().uuid(),
+  name: z.string(),
+  description: z.string(),
+  is_builtin: z.boolean(),
+  permissions: z.array(z.string()).default([]),
+  member_count: z.number().int().nonnegative().default(0),
+});
+export type Role = z.infer<typeof RoleSchema>;
+
+export const GroupSchema = z.object({
+  id: z.string().uuid(),
+  name: z.string(),
+  description: z.string(),
+  owner_id: z.string().uuid().nullable(),
+  owner_name: z.string().nullable().default(null),
+  member_count: z.number().int().nonnegative().default(0),
+  created_at: z.string(),
+});
+export type Group = z.infer<typeof GroupSchema>;
+
+export const GroupMemberSchema = z.object({
+  user_id: z.string().uuid(),
+  username: z.string(),
+  display_name: z.string(),
+});
+export type GroupMember = z.infer<typeof GroupMemberSchema>;
+
+export const GrantSchema = z.object({
+  id: z.string().uuid(),
+  grantee_type: z.enum(["user", "group"]),
+  grantee_id: z.string().uuid(),
+  grantee_name: z.string().default(""),
+  permission: z.enum(["read", "write"]),
+  created_at: z.string(),
+});
+export type Grant = z.infer<typeof GrantSchema>;
+
+export const PrincipalSearchSchema = z.object({
+  users: z.array(z.object({ id: z.string().uuid(), username: z.string(), display_name: z.string() })),
+  groups: z.array(z.object({ id: z.string().uuid(), name: z.string() })),
+});
+export type PrincipalSearch = z.infer<typeof PrincipalSearchSchema>;
 
 export const DailyUsageSchema = z.object({
   date: z.string(),

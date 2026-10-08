@@ -57,8 +57,51 @@ async def get_current_user(
     return user
 
 
-async def require_admin(user: User = Depends(get_current_user)) -> User:
-    """管理后台端点鉴权：仅 role=admin 放行，否则 403。"""
-    if user.role != "admin":
-        raise AppError("FORBIDDEN", "需要管理员权限", 403)
-    return user
+async def require_admin(
+    user: User = Depends(get_current_user),
+    db: AsyncSession = Depends(get_db),
+) -> User:
+    """管理后台端点鉴权（兼容入口）：旧 role=admin 列或持 admin:user_manage 权限点放行。
+
+    新端点应使用 require_permission("...") 做细粒度控制。
+    """
+    if user.role == "admin":
+        return user
+    from app.services.authorization import get_user_permissions
+
+    if "admin:user_manage" in await get_user_permissions(db, user.id):
+        return user
+    raise AppError("FORBIDDEN", "需要管理员权限", 403)
+
+
+def require_permission(code: str):
+    """细粒度权限点校验依赖工厂：用户（经角色聚合）持有指定权限点才放行，否则 403。"""
+
+    async def dependency(
+        user: User = Depends(get_current_user),
+        db: AsyncSession = Depends(get_db),
+    ) -> User:
+        from app.services.authorization import get_user_permissions
+
+        if code not in await get_user_permissions(db, user.id):
+            raise AppError("FORBIDDEN", f"缺少权限：{code}", 403)
+        return user
+
+    return dependency
+
+
+def require_any_permission(*codes: str):
+    """持有任一指定权限点即放行（如只读角色列表对 user_manage / role_manage 同时开放）。"""
+
+    async def dependency(
+        user: User = Depends(get_current_user),
+        db: AsyncSession = Depends(get_db),
+    ) -> User:
+        from app.services.authorization import get_user_permissions
+
+        perms = await get_user_permissions(db, user.id)
+        if not any(code in perms for code in codes):
+            raise AppError("FORBIDDEN", f"缺少权限：{' 或 '.join(codes)}", 403)
+        return user
+
+    return dependency
