@@ -1,9 +1,34 @@
 # LLM Calls & Multi-Agent Orchestration
 
-> Conventions introduced by story-1008 (multi-agent orchestration). Read before
+> Conventions introduced by story-1008 (multi-agent orchestration + provider adapter). Read before
 > adding any non-stream LLM call, a new Agent role, or touching the chat tool loop.
 
 ---
+
+## 0. Provider protocol adapter (story-1008, Anthropic)
+
+`ProviderConfig.protocol` (`"openai"` default | `"anthropic"`) selects the wire protocol.
+The ONLY two dispatch points are `openai_compatible.stream_chat` (stream + tools) and
+`llm_client.chat` (non-stream + structured) — every caller (chat loop, orchestrator,
+Agent roles, memory, query_rewrite, eval_runner, worker) is protocol-agnostic.
+
+Rules:
+
+- A new protocol = one new `services/<protocol>.py` implementing the same pair of entry
+  functions (stream triplets `(kind, payload, StreamResult)` + non-stream
+  `(content, usage)`), plus one dispatch branch in each entry point. Do NOT abstract a
+  shared base class — protocols differ too much; premature abstraction is fragile.
+- The adapter must preserve: event order (`usage` before `tool_call`), retry policy
+  (once on 5xx/network error, never on timeout), usage key mapping
+  (`prompt_tokens`/`completion_tokens`), and StreamResult shape (`tool_calls` with
+  `arguments` as a JSON string).
+- Graceful degradation: capabilities a protocol lacks (e.g. Anthropic has no
+  `response_format`) degrade to prompt-instruction + client-side tolerant parsing —
+  never break the call for it.
+- Internal messages stay in OpenAI shape everywhere; translation
+  (`translate_messages`/`translate_tools`) happens only at the adapter boundary.
+- SQLite local dev bypasses alembic (`create_all`); after adding a model column, patch
+  existing local DBs with `ALTER TABLE` manually (alembic still authoritative for PG).
 
 ## 1. Non-stream LLM calls: single entry point
 

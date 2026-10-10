@@ -14,6 +14,11 @@
 
 ### 新增
 
+- **模型协议适配层（Claude/Anthropic）**：模型配置新增 `protocol` 字段（openai / anthropic），
+  `stream_chat` 与 `llm_client` 双入口按协议分发、全部调用方零改动；Anthropic Messages API 完整映射
+  （system 顶层提取、tool_use/tool_result 块互转、SSE 事件翻译为统一三元组、usage 字段映射）；
+  无 `response_format` 时 JSON 结构化输出优雅降级为 prompt 指令 + 宽容解析；
+  模型设置页支持协议选择（预设地址联动）与协议徽标；alembic 0015 迁移
 - **多 Agent 编排（feature flag 默认关闭）**：
   - 统一非流式 LLM client `services/llm_client.py`（JSON 结构化输出 + Pydantic 校验、超时上限、5xx/网络错误重试一次、Langfuse 埋点），`memory.py` 与 `query_rewrite.py` 裸写 httpx 收敛迁移
   - **L4 LLM 查询分类路由**（`LLM_ROUTER_ENABLED`）：`agents/router.py` 把 query 分类 factual/list/comparison/summary → 代码映射 top_k（3/10/10/8），结果按改写后 query 缓存（TTL 5 分钟），超时/解析失败自动回退 L2 启发式

@@ -1,0 +1,4 @@
+{"file": ".trellis/spec/backend/llm-agents.md", "reason": "llm_client/stream_chat entry conventions the adapter must preserve"}
+{"file": ".trellis/spec/backend/database-guidelines.md", "reason": "alembic migration conventions for protocol column"}
+{"file": ".trellis/spec/backend/error-handling.md", "reason": "retry/timeout/degradation parity across protocols"}
+{"file": ".trellis/spec/frontend/type-safety.md", "reason": "zod schema extension for protocol field"}
