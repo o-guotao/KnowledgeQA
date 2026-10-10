@@ -14,10 +14,16 @@
 
 ### 新增
 
+- **多 Agent 编排（feature flag 默认关闭）**：
+  - 统一非流式 LLM client `services/llm_client.py`（JSON 结构化输出 + Pydantic 校验、超时上限、5xx/网络错误重试一次、Langfuse 埋点），`memory.py` 与 `query_rewrite.py` 裸写 httpx 收敛迁移
+  - **L4 LLM 查询分类路由**（`LLM_ROUTER_ENABLED`）：`agents/router.py` 把 query 分类 factual/list/comparison/summary → 代码映射 top_k（3/10/10/8），结果按改写后 query 缓存（TTL 5 分钟），超时/解析失败自动回退 L2 启发式
+  - **Planner-Executor-Reviewer 编排循环**（`AGENT_ORCHESTRATION_ENABLED`）：`agents/orchestrator.py` 替代硬编码两轮工具回路；Planner 只产出意图序列（工具参数由原生 tools 通道生成），Reviewer 校验证据充分性并触发补充检索；步数上限 `AGENT_MAX_STEPS`、token 预算 `AGENT_TOKEN_BUDGET`（仅计 Agent 节点）、单步超时硬限制；危险操作仍走人工确认闸门（确认后终止本轮，不跨请求续跑）；客户端断连即中止编排；Planner 首轮失败完全回退原工具回路
+  - **步骤时间线**：SSE 新增 `agent_step` 事件（按实际发生顺序发送），前端 `AgentStepTimeline` 可折叠展示路由/计划/执行/校验步骤（running 实时态 + 历史消息从 `messages.tool_call` 留痕恢复，带 `kind=agent_steps` 判别键）
+  - 评测中心新增 **Router A/B** 模式（`router_ab`）：同一数据集分别经 L2 启发式与 L4 Router 决策 top_k 后对比 gold 命中率；Agent 节点开销在 UsageRecord 以 `model[role]` 后缀区分可拆分
 - **top_k 按问题复杂度自适应（L1-L3）**：L1 前端「检索范围」改为四档语义按钮（自动/精确 3/均衡 5/广泛 10），
   默认自动；L2 后端规则路由 `auto_top_k`（列举/对比类 → 10、单点事实短问句 → 3、其余 → 5）；
   L3 重排后分数断崖截断（top_k 退化为上限，证据集中时实际块数更少，下限 3，仅自动模式且重排开启时生效，
-  用户显式指定 top_k 时不截断）。L4（LLM 查询分类路由）未做，见 `docs/功能规划.md`
+  用户显式指定 top_k 时不截断）。L4 已落地（见上），开关默认关闭
 - CORS methods/headers 收紧为显式列表（带凭证跨域规范）
 
 ## [0.4.0] - 2026-09-17

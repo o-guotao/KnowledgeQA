@@ -1,0 +1,4 @@
+{"file": ".trellis/spec/backend/quality-guidelines.md", "reason": "backend quality gate for check pass"}
+{"file": ".trellis/spec/frontend/quality-guidelines.md", "reason": "frontend quality gate for check pass"}
+{"file": ".trellis/spec/backend/error-handling.md", "reason": "verify degradation equivalence when flags off"}
+{"file": ".trellis/spec/frontend/type-safety.md", "reason": "verify SSE schema union correctness"}

@@ -20,6 +20,7 @@ This directory contains guidelines for backend development. Fill in each file wi
 | [Documents API & Ingest](./documents-api.md) | Upload validation pipeline, no_text / content_hash dup, raw-file endpoint | Active |
 | [List Pagination & Search](./list-pagination.md) | Paged envelope, PageParams, tiebreaker rule, LIKE escaping, JSON-column search gotcha | Active |
 | [Eval Center](./eval-center.md) | Eval datasets/runs, worker-async runner isolation, latency instrumentation, Recharts lazy-loading | Active |
+| [LLM Calls & Multi-Agent](./llm-agents.md) | llm_client single entry, Agent role pattern, tool_call payload shapes, agent_step SSE contract, feature-flag equivalence | Active |
 | [Quality Guidelines](./quality-guidelines.md) | Code standards, forbidden patterns | To fill |
 | [Logging Guidelines](./logging-guidelines.md) | Structured logging, log levels | To fill |
 

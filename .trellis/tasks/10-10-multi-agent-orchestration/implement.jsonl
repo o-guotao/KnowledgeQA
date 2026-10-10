@@ -1,0 +1,7 @@
+{"file": ".trellis/spec/backend/index.md", "reason": "backend spec entry: pre-dev checklist and quality gate"}
+{"file": ".trellis/spec/backend/error-handling.md", "reason": "degradation/error semantics for agent nodes and llm_client"}
+{"file": ".trellis/spec/backend/logging-guidelines.md", "reason": "agent node decision-summary logging rules"}
+{"file": ".trellis/spec/backend/eval-center.md", "reason": "eval_runner config-group extension for router A/B"}
+{"file": ".trellis/spec/frontend/index.md", "reason": "frontend spec entry for SSE schema and timeline UI"}
+{"file": ".trellis/spec/frontend/type-safety.md", "reason": "zod discriminated union extension for agent_step event"}
+{"file": ".trellis/spec/frontend/component-guidelines.md", "reason": "AgentStepTimeline component conventions"}
