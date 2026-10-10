@@ -3,8 +3,9 @@ import ReactMarkdown from "react-markdown";
 import remarkGfm from "remark-gfm";
 import { z } from "zod";
 
-import type { Message } from "../api/schemas";
+import type { AgentStep, Message } from "../api/schemas";
 import { cn } from "../lib/utils";
+import { AgentStepTimeline } from "./AgentStepTimeline";
 import { CopyButton } from "./CopyButton";
 import { ErrorCard } from "./ErrorCard";
 
@@ -20,6 +21,7 @@ export interface DisplayMessage {
   content: string;
   status?: Message["status"] | "local_streaming";
   citations?: Array<z.infer<typeof CitationSchema>>;
+  agentSteps?: AgentStep[];  // 编排步骤时间线（实时 SSE 收集 / 历史留痕恢复）
   error?: string | null;
   traceId?: string;
   feedback?: "up" | "down" | null;
@@ -87,6 +89,10 @@ export function MessageItem({ message, streaming, onCitationClick, onRetry, onFe
         {isUser ? <UserIcon size={16} /> : <Bot size={16} />}
       </div>
       <div className={cn("max-w-[75%] space-y-2", isUser && "flex flex-col items-end")}>
+        {/* 编排步骤时间线：assistant 消息头部（实时收集 + 历史留痕恢复） */}
+        {message.role === "assistant" && message.agentSteps && message.agentSteps.length > 0 && (
+          <AgentStepTimeline steps={message.agentSteps} />
+        )}
         {message.status === "failed" ? (
           <ErrorCard
             message={message.error ?? "生成失败"}

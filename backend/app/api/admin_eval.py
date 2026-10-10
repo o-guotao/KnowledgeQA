@@ -187,6 +187,7 @@ async def create_run(
         "chunk_size": body.chunk_size,
         "chunk_overlap": body.chunk_overlap,
         "kb_mode": body.kb_mode,
+        "router_ab": body.router_ab,
         # with_llm 的 provider 解析与 online 语料检索范围都用创建者身份
         "user_id": str(user.id),
     }

@@ -94,6 +94,18 @@ class Settings(BaseSettings):
     # 切分策略：window 滑动窗口 / semantic 语义分块（按 Markdown 标题层级，父子块）
     chunk_strategy: str = "window"  # window | semantic
 
+    # 多 Agent 编排（全部默认关闭 opt-in；关闭或节点失败时行为与单 Agent 流水线一致）
+    # L4 LLM 查询分类路由：替代 auto_top_k 启发式，失败自动回退 L2 规则
+    llm_router_enabled: bool = False
+    # Planner-Executor-Reviewer 编排循环：替代硬编码 range(2) 工具回路
+    agent_orchestration_enabled: bool = False
+    # 编排硬限制：计划步骤数上限（LLM 调用次数独立上限于 orchestrator 内约束）
+    agent_max_steps: int = 4
+    # Agent 节点 token 预算（仅计 Router/Planner/Reviewer 开销，不含终答）
+    agent_token_budget: int = 8000
+    # 单个 Agent 节点调用的超时上限（秒）
+    agent_step_timeout: float = 30.0
+
     # Langfuse 追踪（可观测性：LLM 调用/召回/重排追踪）。无 key 时自动禁用（no-op）
     langfuse_public_key: str = ""
     langfuse_secret_key: str = ""

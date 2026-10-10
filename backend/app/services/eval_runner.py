@@ -248,6 +248,54 @@ async def _run_group(
     return summary, items_out
 
 
+async def _run_router_ab(factory: async_sessionmaker, user_id: uuid.UUID, questions: list[dict], provider) -> dict:
+    """Router A/B：同一批问题分别经 L2 启发式与 L4 Router 决策 top_k 后召回，对比 gold 命中率。
+
+    常规配置组显式扫描 top_k（不走路由决策），无法评 Router 价值；本模式走
+    真实路由路径（auto_top_k vs route()），L4 失败回退 L2 并计入 fallback 率。
+    差异项（决策 k 不同或命中不同）单独列出，避免 summary 膨胀。
+    """
+    from app.services.agents.router import RouterFallback, reset_cache, route
+    from app.services.rag import auto_top_k, retrieve
+
+    reset_cache()
+    session_id = uuid.uuid4()  # Router 缓存按 session 隔离，单次 run 一个虚拟 session
+    l2_hits = l4_hits = fallbacks = 0
+    l2_k_total = l4_k_total = 0
+    diffs: list[dict] = []
+    n = len(questions)
+    for item in questions:
+        q, gold = item["q"], item["gold_doc"]
+        vec = await embed_query(q)
+        l2_k = auto_top_k(q)
+        try:
+            decision, _step, _usage = await route(provider, session_id, q)
+            l4_k = decision.top_k
+        except RouterFallback:
+            l4_k = l2_k
+            fallbacks += 1
+        async with factory() as db:
+            l2_chunks = await retrieve(db, user_id, vec, top_k=l2_k, query_text=q)
+            l4_chunks = await retrieve(db, user_id, vec, top_k=l4_k, query_text=q)
+        l2_hit = any(c.document_name == gold for c in l2_chunks)
+        l4_hit = any(c.document_name == gold for c in l4_chunks)
+        l2_hits += l2_hit
+        l4_hits += l4_hit
+        l2_k_total += l2_k
+        l4_k_total += l4_k
+        if l2_k != l4_k or l2_hit != l4_hit:
+            diffs.append({"q": q[:80], "l2_k": l2_k, "l4_k": l4_k, "l2_hit": l2_hit, "l4_hit": l4_hit})
+    return {
+        "questions": n,
+        "l2_hit_rate": round(l2_hits / n, 4),
+        "l4_hit_rate": round(l4_hits / n, 4),
+        "l4_fallback_rate": round(fallbacks / n, 4),
+        "l2_avg_k": round(l2_k_total / n, 2),
+        "l4_avg_k": round(l4_k_total / n, 2),
+        "diff_items": diffs[:50],
+    }
+
+
 async def run_eval_run(run_id: uuid.UUID) -> None:
     """worker 入口：执行评测并写回结果。异常时先把 run 标记 failed 再抛出（交任务重试/死信）。"""
     started = time.monotonic()
@@ -320,6 +368,14 @@ async def run_eval_run(run_id: uuid.UUID) -> None:
                     per_item[i][tag] = entry
                 logger.info("eval run %s group %s done: recall@5=%s mrr=%s",
                             run_id, tag, group_summary["recall_at_k"].get("5"), group_summary["mrr"])
+
+            # Router A/B（可选）：L2 启发式 vs L4 Router 的 top_k 决策命中率对比
+            if llm_available and cfg.get("router_ab"):
+                try:
+                    summary["router_ab"] = await _run_router_ab(factory, user_id, questions, provider)
+                except Exception as exc:
+                    logger.warning("eval run %s router ab degraded: %s", run_id, exc)
+                    summary["router_ab"] = {"error": str(exc)[:200]}
 
         duration_ms = round((time.monotonic() - started) * 1000, 1)
         async with SessionLocal() as db:

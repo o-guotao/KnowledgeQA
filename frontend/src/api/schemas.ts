@@ -398,6 +398,29 @@ export const DoneEventSchema = z.object({
   message_id: z.string().uuid(),
 });
 
+/** 编排步骤（时间线数据单元）：与后端 services/agents/steps.AgentStep 对应 */
+export const AgentStepSchema = z.object({
+  step_type: z.enum(["router", "plan", "tool", "review"]),
+  agent: z.string(),
+  label: z.string(),
+  status: z.enum(["running", "done", "failed", "skipped"]),
+  duration_ms: z.number().default(0),
+  detail: z.record(z.unknown()).default({}),
+});
+export type AgentStep = z.infer<typeof AgentStepSchema>;
+
+/** 编排步骤事件：按实际发生顺序发送（Router 决策可先于 citation） */
+export const AgentStepEventSchema = z.object({
+  ...TraceId,
+  type: z.literal("agent_step"),
+  step_type: z.enum(["router", "plan", "tool", "review"]),
+  agent: z.string(),
+  label: z.string(),
+  status: z.enum(["running", "done", "failed", "skipped"]),
+  duration_ms: z.number(),
+  detail: z.record(z.unknown()),
+});
+
 export const ChatEventSchema = z.discriminatedUnion("type", [
   DeltaEventSchema,
   CitationEventSchema,
@@ -405,6 +428,7 @@ export const ChatEventSchema = z.discriminatedUnion("type", [
   UsageEventSchema,
   ErrorEventSchema,
   DoneEventSchema,
+  AgentStepEventSchema,
 ]);
 export type ChatEvent = z.infer<typeof ChatEventSchema>;
 

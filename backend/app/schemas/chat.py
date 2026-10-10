@@ -55,7 +55,31 @@ class DoneEvent(ChatEventBase):
     message_id: uuid.UUID
 
 
+class AgentStepEvent(ChatEventBase):
+    """编排步骤事件：路由决策/计划/工具执行/校验结论。
+
+    按实际发生顺序发送（Router 决策在召回之前，其 step 先于 citation 出现）；
+    字段与 services/agents/steps.AgentStep 平铺对应（避免 schemas 依赖 services）。
+    """
+
+    type: Literal["agent_step"] = "agent_step"
+    step_type: Literal["router", "plan", "tool", "review"]
+    agent: str
+    label: str
+    status: Literal["running", "done", "failed", "skipped"]
+    duration_ms: int = 0
+    detail: dict = Field(default_factory=dict)
+
+    @classmethod
+    def from_step(cls, trace_id: str, step) -> "AgentStepEvent":
+        return cls(
+            trace_id=trace_id, step_type=step.step_type, agent=step.agent,
+            label=step.label, status=step.status,
+            duration_ms=step.duration_ms, detail=step.detail,
+        )
+
+
 ChatEvent = Annotated[
-    DeltaEvent | CitationEvent | ToolCallEvent | UsageEvent | ErrorEvent | DoneEvent,
+    DeltaEvent | CitationEvent | ToolCallEvent | UsageEvent | ErrorEvent | DoneEvent | AgentStepEvent,
     Field(discriminator="type"),
 ]

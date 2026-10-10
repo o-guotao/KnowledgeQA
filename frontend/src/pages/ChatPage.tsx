@@ -5,10 +5,12 @@ import { useLocation, useNavigate } from "react-router-dom";
 
 import { del, get, post, withQuery } from "../api/client";
 import {
+  AgentStepSchema,
   MessageSchema,
   SessionSchema,
   VersionInfoSchema,
   pageSchema,
+  type AgentStep,
   type ChatEvent,
   type Message,
   type Session,
@@ -33,6 +35,15 @@ const nextLocalId = () => `local-${++localId}`;
 /** 历史消息每页条数：与服务端 MessagePageParams 默认值一致 */
 const MESSAGE_PAGE_SIZE = 50;
 
+/** 从 messages.tool_call 恢复编排步骤留痕（两种形态：
+ * 纯留痕 {kind:"agent_steps",steps:[...]} / 确认型+留痕 {id,name,args,agent_steps:[...]}） */
+function extractAgentSteps(toolCall: Record<string, unknown> | null): AgentStep[] | undefined {
+  if (!toolCall) return undefined;
+  const raw = toolCall.kind === "agent_steps" ? toolCall.steps : toolCall.agent_steps;
+  const parsed = z.array(AgentStepSchema).safeParse(raw);
+  return parsed.success && parsed.data.length > 0 ? parsed.data : undefined;
+}
+
 /** 服务端消息 → 展示模型（过滤流式残留行：后端读取时会把 streaming 清理为 aborted） */
 function toDisplayMessages(rows: Message[]): DisplayMessage[] {
   return rows
@@ -44,6 +55,7 @@ function toDisplayMessages(rows: Message[]): DisplayMessage[] {
       content: m.content,
       status: m.status,
       citations: (m.citations ?? undefined) as DisplayMessage["citations"],
+      agentSteps: extractAgentSteps(m.tool_call),
       error: m.error,
       traceId: m.trace_id,
       feedback: m.feedback ?? null,
@@ -215,6 +227,30 @@ export function ChatPage() {
       case "usage":
         setQuotaRefreshKey((k) => k + 1);
         break;
+      case "agent_step": {
+        // 同 agent+step_type 的 running 条目被其终态替换；其余按到达顺序追加
+        const step: AgentStep = {
+          step_type: event.step_type,
+          agent: event.agent,
+          label: event.label,
+          status: event.status,
+          duration_ms: event.duration_ms,
+          detail: event.detail,
+        };
+        setMessages((prev) =>
+          prev.map((m) => {
+            if (m.id !== localAssistantId) return m;
+            const steps = [...(m.agentSteps ?? [])];
+            const runningIdx = steps.findIndex(
+              (s) => s.status === "running" && s.agent === step.agent && s.step_type === step.step_type,
+            );
+            if (step.status === "running" || runningIdx < 0) steps.push(step);
+            else steps[runningIdx] = step;
+            return { ...m, agentSteps: steps };
+          }),
+        );
+        break;
+      }
       case "tool_call":
         setToolCall(event);
         setMessages((prev) =>

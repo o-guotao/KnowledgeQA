@@ -29,6 +29,9 @@ class EvalRunCreate(BaseModel):
     # 语料模式：sample=内置样例文档（gold_doc 须为样例库文件名）；
     # online=创建者线上知识库（gold_doc 匹配线上文档名，检索范围=本人+团队空间）
     kb_mode: str = Field(default="sample", pattern="^(sample|online)$")
+    # Router A/B：同一批问题分别经 L2 启发式与 L4 Router 决策 top_k 后召回，
+    # 对比 gold 命中率（需 with_llm=true 提供 provider）
+    router_ab: bool = False
 
 
 class EvalRunOut(BaseModel):

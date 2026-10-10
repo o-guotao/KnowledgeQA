@@ -1,7 +1,8 @@
 """SSE 流式对话：服务端代理 DeepSeek，前端禁止直连模型。
 
 事件流（可辨识联合，见 schemas/chat.py）：
-citation* -> delta* -> (tool_call -> done) | (usage -> done) | error
+agent_step* -> citation* -> agent_step* -> delta* -> (tool_call -> done) | (usage -> done) | error
+（agent_step 按实际发生顺序发送：Router 决策在召回之前，编排步骤在召回之后、delta 之前）
 
 DB 策略：流开始前建立 assistant 记录拿到 id；流期间只读；
 收尾统一用 UPDATE 语句落库（content/citations/usage/status），
@@ -27,6 +28,7 @@ from app.models.usage_record import UsageRecord
 from app.models.user import User
 from app.config import get_settings
 from app.schemas.chat import (
+    AgentStepEvent,
     ChatRequest,
     CitationEvent,
     DeltaEvent,
@@ -36,6 +38,7 @@ from app.schemas.chat import (
     UsageEvent,
 )
 from app.services import cost, injection, langfuse_tracing
+from app.services.agents.steps import steps_key, steps_to_trace
 from app.services.deepseek import ModelCallError, ModelTimeoutError
 from app.services.embedding import embed_query
 from app.services.query_rewrite import rewrite_query
@@ -103,6 +106,34 @@ async def _finish_message(message_id: uuid.UUID, **values) -> None:
     async with SessionLocal() as db:
         await db.execute(update(Message).where(Message.id == message_id).values(**values))
         await db.commit()
+
+
+async def _record_agent_usage(
+    user_id: uuid.UUID, session_id: uuid.UUID, provider: ProviderConfig,
+    role: str, usage: dict | None, trace_id: str,
+) -> tuple[int, int]:
+    """Agent 节点（router/planner/reviewer）计费：累计配额 + 落 UsageRecord。
+
+    model 字段带 [role] 后缀（如 deepseek-chat[router]），报表 SQL 可按 LIKE 拆分
+    Agent 开销与主调用。返回 (prompt, completion) 供调用方累计会话总账。
+    """
+    if not usage:
+        return 0, 0
+    p, c = usage.get("prompt_tokens", 0), usage.get("completion_tokens", 0)
+    if p == 0 and c == 0:
+        return 0, 0
+    async with SessionLocal() as db:
+        await cost.accumulate_usage(db, user_id, p, c)
+        db.add(UsageRecord(
+            user_id=user_id, session_id=session_id,
+            model=f"{provider.model_name}[{role}]", prompt_tokens=p,
+            completion_tokens=c, cost_cny=cost.compute_cost_cny(
+                p, c, provider.price_input_per_million,
+                provider.price_output_per_million,
+            ), trace_id=trace_id,
+        ))
+        await db.commit()
+    return p, c
 
 
 class _ClientGone(Exception):
@@ -205,9 +236,45 @@ async def _event_stream(
                 timing: dict = {}
                 query_vec = await embed_query(retrieval_query)
                 # top_k 决策：用户显式指定（前端三档）→ 直接用、不截断；
-                # 未指定（自动）→ L2 规则路由定上限 + L3 重排分数断崖截断定实际块数
+                # 未指定（自动）→ L4 Router Agent（开关开时）→ 失败/关闭回退
+                # L2 规则路由定上限 + L3 重排分数断崖截断定实际块数
                 if body.top_k is not None:
                     k, adaptive = body.top_k, False
+                elif get_settings().llm_router_enabled:
+                    try:
+                        from app.services.agents.router import RouterFallback, route
+
+                        yield _sse(AgentStepEvent(
+                            trace_id=trace_id, step_type="router", agent="router",
+                            label="正在分类查询…", status="running",
+                        ))
+                        decision, rstep, rusage = await route(
+                            provider, body.session_id, retrieval_query,
+                            trace_id=trace_id,
+                        )
+                        k, adaptive = decision.top_k, True
+                        # agent_step 事件按实际时序发送（Router 决策在召回之前）
+                        yield _sse(AgentStepEvent.from_step(trace_id, rstep))
+                        p, c = await _record_agent_usage(
+                            user.id, body.session_id, provider, "router", rusage, trace_id
+                        )
+                        accumulated_prompt += p
+                        accumulated_completion += c
+                        logger.info(
+                            "router decision",
+                            extra={
+                                "event": "router_decision",
+                                "extra": {"category": decision.category, "top_k": decision.top_k, "cached": rstep.detail.get("cached")},
+                            },
+                        )
+                    except RouterFallback as exc:
+                        logger.warning(
+                            "router degraded: %s", exc,
+                            extra={"event": "router_degraded"},
+                        )
+                        if exc.step is not None:
+                            yield _sse(AgentStepEvent.from_step(trace_id, exc.step))
+                        k, adaptive = auto_top_k(retrieval_query), True
                 else:
                     k, adaptive = auto_top_k(retrieval_query), True
                 async with SessionLocal() as db:
@@ -259,14 +326,128 @@ async def _event_stream(
             + [{"role": "user", "content": build_rag_user_content(body.content, chunks)}]
         )
 
-        # ---- 模型流式调用（工具回路最多 2 轮） ----
+        # ---- 多 Agent 编排（开关）：Planner-Executor-Reviewer 替代硬编码工具回路 ----
+        # Planner 首轮失败 → orch_result 保持 None，完全走现有 range(2) 行为（降级等价）；
+        # 编排成功 → 补充证据并入引用与终答上下文，终答只跑 1 轮、不带 tools。
+        orch_result = None
+        if get_settings().agent_orchestration_enabled:
+            from app.services.agents.context import AgentContext
+            from app.services.agents.orchestrator import (
+                OrchestrationAborted,
+                OrchestrationFallback,
+                run_orchestrated,
+            )
+
+            ctx = AgentContext(
+                user_id=user.id, session_id=body.session_id,
+                query=body.content, retrieval_query=retrieval_query,
+            )
+            ctx.add_evidence_chunks([(c.document_name, c.content) for c in chunks])
+            try:
+                async for ev_kind, ev_payload in run_orchestrated(
+                    ctx, provider, messages, chunks,
+                    trace_id=trace_id,
+                    is_client_gone=request.is_disconnected,
+                ):
+                    if ev_kind == "step":
+                        yield _sse(AgentStepEvent.from_step(trace_id, ev_payload))
+                    elif ev_kind == "delta":
+                        if ttft_ms is None:
+                            ttft_ms = round((time.perf_counter() - t_start) * 1000, 1)
+                        content_parts.append(ev_payload)
+                        yield _sse(DeltaEvent(trace_id=trace_id, content=ev_payload))
+                    elif ev_kind == "usage":
+                        # 编排 tool 步骤的 stream 调用计费（与主回路 usage 同构）
+                        u = ev_payload or {}
+                        p, c = u.get("prompt_tokens", 0), u.get("completion_tokens", 0)
+                        accumulated_prompt += p
+                        accumulated_completion += c
+                        usage = {"prompt_tokens": accumulated_prompt, "completion_tokens": accumulated_completion}
+                        cost_cny_orch = cost.compute_cost_cny(
+                            p, c, provider.price_input_per_million, provider.price_output_per_million
+                        )
+                        async with SessionLocal() as db:
+                            await cost.accumulate_usage(db, user.id, p, c)
+                            db.add(UsageRecord(
+                                user_id=user.id, session_id=body.session_id,
+                                model=provider.model_name, prompt_tokens=p,
+                                completion_tokens=c, cost_cny=cost_cny_orch, trace_id=trace_id,
+                            ))
+                            await db.commit()
+                        yield _sse(UsageEvent(
+                            trace_id=trace_id, prompt_tokens=p,
+                            completion_tokens=c, cost_cny=cost_cny_orch,
+                        ))
+                    elif ev_kind == "agent_usage":
+                        # Planner/Reviewer 节点计费：model 带 [role] 后缀，报表可拆分
+                        role, au = ev_payload
+                        p, c = await _record_agent_usage(
+                            user.id, body.session_id, provider, role, au, trace_id
+                        )
+                        accumulated_prompt += p
+                        accumulated_completion += c
+                        if au:
+                            usage = {
+                                "prompt_tokens": accumulated_prompt,
+                                "completion_tokens": accumulated_completion,
+                            }
+                    elif ev_kind == "result":
+                        orch_result = ev_payload
+            except OrchestrationAborted:
+                raise _ClientGone()
+            except OrchestrationFallback as exc:
+                logger.warning(
+                    "orchestration fallback: %s", exc,
+                    extra={"event": "orchestration_fallback"},
+                )
+                orch_result = None
+
+        if orch_result is not None:
+            # 补充证据：并入引用（补发 CitationEvent）与终答上下文
+            for c in orch_result.extra_chunks:
+                citations.append({
+                    "chunk_id": str(c.chunk_id), "document_id": str(c.document_id),
+                    "document_name": c.document_name, "score": c.score,
+                })
+                yield _sse(CitationEvent(
+                    trace_id=trace_id, chunk_id=c.chunk_id, document_id=c.document_id,
+                    document_name=c.document_name, snippet=c.content[:120],
+                ))
+            if orch_result.extra_chunks:
+                messages[-1] = {
+                    "role": "user",
+                    "content": build_rag_user_content(body.content, chunks + orch_result.extra_chunks),
+                }
+            messages.extend(orch_result.tool_messages)
+
+            # 确认闸门（定案 A2）：携带已执行步骤留痕，终止本轮编排
+            if orch_result.pending_confirm is not None:
+                pending = orch_result.pending_confirm
+                await _finish_message(
+                    assistant_id, status="pending_confirm",
+                    content="".join(content_parts), citations=citations,
+                    tool_call={
+                        "id": pending["id"], "name": pending["name"],
+                        "args": pending["args"], **steps_key(orch_result.steps),
+                    },
+                    usage={**(usage or {}), "cost_cny": cost.compute_cost_cny(accumulated_prompt, accumulated_completion, provider.price_input_per_million, provider.price_output_per_million)} if usage else None,
+                )
+                yield _sse(ToolCallEvent(
+                    trace_id=trace_id, message_id=assistant_id,
+                    tool_call_id=pending["id"], name=pending["name"], args=pending["args"],
+                ))
+                yield _sse(DoneEvent(trace_id=trace_id, message_id=assistant_id))
+                return
+
+        # ---- 模型流式调用（工具回路最多 2 轮；编排路径只跑 1 轮终答、不带 tools） ----
         # 每轮 stream_chat 末尾会 yield usage（含工具调用轮）；
         # usage 事件到达即累计费用，避免工具回路/确认路径漏算 token。
         # accumulated_* 已在召回前初始化（含改写 token），此处直接累加。
-        for round_no in range(2):
+        for round_no in range(1 if orch_result is not None else 2):
             has_tool_call = False
             async for kind, payload, result in stream_chat(
-                provider, messages, tools=TOOL_DEFINITIONS if round_no == 0 else None
+                provider, messages,
+                tools=TOOL_DEFINITIONS if (round_no == 0 and orch_result is None) else None,
             ):
                 if await request.is_disconnected():
                     raise _ClientGone()
@@ -347,8 +528,6 @@ async def _event_stream(
                                 trace_id=trace_id, tool_call={"name": tc["name"], "auto": True},
                             ))
                         await db.commit()
-                elif kind == "usage":
-                    usage = result.usage
             if not has_tool_call:
                 break
 
@@ -361,6 +540,8 @@ async def _event_stream(
         await _finish_message(
             assistant_id, status="complete", content="".join(content_parts),
             citations=citations,
+            # 编排路径：步骤轨迹留痕（kind=agent_steps 判别键），供历史消息时间线恢复
+            tool_call=steps_to_trace(orch_result.steps) if orch_result is not None and orch_result.steps else None,
             usage={**(usage or {}), "cost_cny": cost_cny} if usage else None,
         )
         # 记忆任务（L2 摘要 / L3 抽取）：对话完成后异步投递，不阻塞 SSE 收尾
