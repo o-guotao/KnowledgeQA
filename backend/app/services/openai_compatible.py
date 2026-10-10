@@ -10,6 +10,11 @@ from app.services.model_configs import ProviderConfig
 
 async def test_provider_connection(provider: ProviderConfig) -> None:
     """发起一个最小请求；调用方只暴露统一成功/失败信息。"""
+    if provider.protocol == "anthropic":
+        from app.services.anthropic import test_connection
+
+        await test_connection(provider)
+        return
     timeout = httpx.Timeout(provider.timeout_seconds, connect=10.0)
     async with httpx.AsyncClient(timeout=timeout) as client:
         response = await client.post(
@@ -74,6 +79,13 @@ class _MarkupFilter:
 async def stream_chat(
     provider: ProviderConfig, messages: list[dict], tools: list[dict] | None = None
 ) -> AsyncGenerator[tuple[str, dict | None, StreamResult], None]:
+    # 协议适配层分流：anthropic 走 Messages API 适配（同一三元组协议，调用方无感）
+    if provider.protocol == "anthropic":
+        from app.services.anthropic import stream_chat as anthropic_stream_chat
+
+        async for item in anthropic_stream_chat(provider, messages, tools):
+            yield item
+        return
     payload: dict = {"model": provider.model_name, "messages": messages, "stream": True, "stream_options": {"include_usage": True}}
     if tools:
         payload["tools"] = tools

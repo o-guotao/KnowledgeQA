@@ -77,6 +77,33 @@ async def chat(
     timeout_cap 为节点级超时上限（实际超时 = min(provider.timeout_seconds, timeout_cap)），
     防止辅助调用串行在主链路上吃光整体预算。
     """
+    # 协议适配层分流：anthropic 走 Messages API（json_mode 优雅降级为 prompt 指令
+    # + 宽容解析兜底；重试策略在 anthropic.chat 内与 openai 路径对齐）
+    if provider.protocol == "anthropic":
+        from app.services.anthropic import chat as anthropic_chat
+
+        timeout_seconds = min(provider.timeout_seconds, timeout_cap)
+        try:
+            content, usage = await anthropic_chat(
+                provider, messages, max_tokens=max_tokens, temperature=temperature,
+                timeout=httpx.Timeout(timeout_seconds, connect=10.0),
+                transport=transport,
+            )
+        except httpx.TimeoutException as exc:
+            raise ModelTimeoutError(f"llm 调用超时（{timeout_seconds}s）") from exc
+        result = LLMCallResult(content=content, usage=usage, messages=messages)
+        if schema is not None:
+            try:
+                result.parsed = schema.model_validate(_extract_json_object(content))
+            except ValidationError as exc:
+                raise LLMStructureError(f"模型输出未通过 schema 校验：{exc}") from exc
+        if trace_id and trace_name:
+            langfuse_tracing.trace_generation(
+                trace_id, trace_name, provider.model_name, messages,
+                content, result.usage, metadata=trace_metadata,
+            )
+        return result
+
     payload: dict = {
         "model": provider.model_name,
         "messages": messages,

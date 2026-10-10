@@ -65,6 +65,8 @@ export type TokenResponse = z.infer<typeof TokenResponseSchema>;
 export const ModelConfigSchema = z.object({
   id: z.string().uuid(),
   name: z.string(),
+  // 协议适配层：openai=OpenAI 兼容 / anthropic=Claude Messages API
+  protocol: z.enum(["openai", "anthropic"]).default("openai"),
   base_url: z.string().url(),
   model_name: z.string(),
   api_key_masked: z.string(),

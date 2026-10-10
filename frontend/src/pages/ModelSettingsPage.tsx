@@ -21,13 +21,19 @@ import { SearchInput } from "../components/ui/search-input";
 import { usePaginatedQuery } from "../hooks/usePaginatedQuery";
 
 type Draft = {
-  name: string; base_url: string; model_name: string; api_key: string; timeout_seconds: string;
+  name: string; protocol: "openai" | "anthropic"; base_url: string; model_name: string; api_key: string; timeout_seconds: string;
   temperature: string; top_p: string; max_tokens: string;
   price_input_per_million: string; price_output_per_million: string;
 };
 
+/** 各协议的默认服务地址与模型名（切换协议时联动表单默认值） */
+const PROTOCOL_PRESETS = {
+  openai: { label: "OpenAI 兼容", base_url: "https://api.deepseek.com", model_name: "deepseek-chat" },
+  anthropic: { label: "Claude (Anthropic)", base_url: "https://api.anthropic.com", model_name: "claude-sonnet-4-5" },
+} as const;
+
 const emptyDraft = (): Draft => ({
-  name: "", base_url: "https://api.deepseek.com", model_name: "deepseek-chat", api_key: "",
+  name: "", protocol: "openai", base_url: "https://api.deepseek.com", model_name: "deepseek-chat", api_key: "",
   timeout_seconds: "60", temperature: "", top_p: "", max_tokens: "",
   price_input_per_million: "", price_output_per_million: "",
 });
@@ -36,7 +42,8 @@ const optionalNumber = (raw: string) => (raw.trim() === "" ? null : Number(raw))
 
 function payload(draft: Draft) {
   return {
-    name: draft.name, base_url: draft.base_url, model_name: draft.model_name, api_key: draft.api_key,
+    name: draft.name, protocol: draft.protocol,
+    base_url: draft.base_url, model_name: draft.model_name, api_key: draft.api_key,
     timeout_seconds: Number(draft.timeout_seconds),
     temperature: optionalNumber(draft.temperature),
     top_p: optionalNumber(draft.top_p),
@@ -110,8 +117,23 @@ export function ModelSettingsPage() {
 
   const edit = (config: ModelConfig) => {
     setEditingId(config.id);
-    setDraft({ name: config.name, base_url: config.base_url, model_name: config.model_name, api_key: "", timeout_seconds: String(config.timeout_seconds), temperature: config.temperature === null ? "" : String(config.temperature), top_p: config.top_p === null ? "" : String(config.top_p), max_tokens: config.max_tokens === null ? "" : String(config.max_tokens), price_input_per_million: config.price_input_per_million === null ? "" : String(config.price_input_per_million), price_output_per_million: config.price_output_per_million === null ? "" : String(config.price_output_per_million) });
+    setDraft({ name: config.name, protocol: config.protocol, base_url: config.base_url, model_name: config.model_name, api_key: "", timeout_seconds: String(config.timeout_seconds), temperature: config.temperature === null ? "" : String(config.temperature), top_p: config.top_p === null ? "" : String(config.top_p), max_tokens: config.max_tokens === null ? "" : String(config.max_tokens), price_input_per_million: config.price_input_per_million === null ? "" : String(config.price_input_per_million), price_output_per_million: config.price_output_per_million === null ? "" : String(config.price_output_per_million) });
     setError(null); setMessage(null); window.scrollTo({ top: 0, behavior: "smooth" });
+  };
+
+  /** 切换协议：base_url/model_name 仍为某个协议预设值时联动替换（自定义值保留） */
+  const changeProtocol = (protocol: Draft["protocol"]) => {
+    setDraft((current) => {
+      const preset = PROTOCOL_PRESETS[protocol];
+      const isPresetUrl = Object.values(PROTOCOL_PRESETS).some((p) => p.base_url === current.base_url);
+      const isPresetModel = Object.values(PROTOCOL_PRESETS).some((p) => p.model_name === current.model_name);
+      return {
+        ...current,
+        protocol,
+        base_url: isPresetUrl ? preset.base_url : current.base_url,
+        model_name: isPresetModel ? preset.model_name : current.model_name,
+      };
+    });
   };
 
   const activate = async (id: string) => {
@@ -140,7 +162,7 @@ export function ModelSettingsPage() {
           </div>
           <ThemeToggle />
         </header>
-        <p className="max-w-3xl text-sm leading-6 text-theme-sub">每个配置使用 OpenAI Chat Completions 兼容接口。API Key 仅在保存时提交、由服务端加密，之后只显示脱敏值。</p>
+        <p className="max-w-3xl text-sm leading-6 text-theme-sub">支持 OpenAI Chat Completions 兼容接口与 Claude (Anthropic) Messages API 两种协议。API Key 仅在保存时提交、由服务端加密，之后只显示脱敏值。</p>
         {(message || error) && <div role="status" className={`rounded-lg border px-4 py-3 text-sm ${error ? "border-red-200 bg-red-50 text-red-700" : "border-emerald-200 bg-emerald-50 text-emerald-700"}`}>{error ?? message}</div>}
 
         <Card>
@@ -184,8 +206,18 @@ export function ModelSettingsPage() {
           <CardHeader><CardTitle className="flex items-center gap-2">{editingId ? <Pencil size={18} /> : <Plus size={18} />}{editingId ? "编辑模型配置" : "添加模型配置"}</CardTitle></CardHeader>
           <CardContent className="grid gap-4 sm:grid-cols-2">
             <label className="space-y-1.5 text-sm font-medium">配置名称<Input value={draft.name} placeholder="例如：DeepSeek 工作模型" onChange={(e) => update("name", e.target.value)} /></label>
+            <label className="space-y-1.5 text-sm font-medium">协议
+              <select
+                value={draft.protocol}
+                onChange={(e) => changeProtocol(e.target.value as Draft["protocol"])}
+                className="flex h-9 w-full rounded-md border border-theme-line bg-theme-input px-3 text-sm text-theme-text"
+              >
+                <option value="openai">{PROTOCOL_PRESETS.openai.label}</option>
+                <option value="anthropic">{PROTOCOL_PRESETS.anthropic.label}</option>
+              </select>
+            </label>
             <label className="space-y-1.5 text-sm font-medium">模型名称<Input value={draft.model_name} onChange={(e) => update("model_name", e.target.value)} /></label>
-            <label className="space-y-1.5 text-sm font-medium sm:col-span-2">Base URL（仅 HTTPS 公网地址）<Input value={draft.base_url} placeholder="https://api.example.com/v1" onChange={(e) => update("base_url", e.target.value)} /></label>
+            <label className="space-y-1.5 text-sm font-medium">Base URL（仅 HTTPS 公网地址）<Input value={draft.base_url} placeholder="https://api.example.com/v1" onChange={(e) => update("base_url", e.target.value)} /></label>
             <label className="space-y-1.5 text-sm font-medium sm:col-span-2">API Key<Input type="password" autoComplete="off" value={draft.api_key} placeholder={editingId ? "留空以保留当前密钥" : "仅保存时使用"} onChange={(e) => update("api_key", e.target.value)} /></label>
             <label className="space-y-1.5 text-sm font-medium">超时（秒）<Input type="number" min="1" max="300" value={draft.timeout_seconds} onChange={(e) => update("timeout_seconds", e.target.value)} /></label>
             <label className="space-y-1.5 text-sm font-medium">采样温度（0–2，可选）<Input type="number" min="0" max="2" step="0.1" placeholder="服务端默认" value={draft.temperature} onChange={(e) => update("temperature", e.target.value)} /></label>
@@ -204,7 +236,7 @@ export function ModelSettingsPage() {
           {configsQuery.error && <p className="text-sm text-red-400">{configsQuery.error}</p>}
           {configs.length === 0 ? <Card><CardContent className="flex flex-col items-center gap-2 py-10 text-center"><Settings2 size={22} className="text-theme-sub" /><p className="text-sm text-theme-sub">{configsQuery.query !== "" ? `没有匹配「${configsQuery.query}」的配置` : "尚未配置模型。添加并保存后即可用于问答。"}</p></CardContent></Card> : configs.map((config) => (
             <Card key={config.id} className={config.is_active ? "border-brand/40 ring-1 ring-brand/10" : ""}><CardContent className="flex flex-col gap-4 py-5 sm:flex-row sm:items-center sm:justify-between">
-              <div><div className="flex items-center gap-2 font-medium text-theme-text">{config.name}{config.is_active && <span className="inline-flex items-center gap-1 rounded-full bg-brand/10 px-2 py-0.5 text-xs text-brand"><CheckCircle2 size={12} />当前使用</span>}</div><p className="mt-1 text-sm text-theme-sub">{config.model_name} · {config.base_url}</p>{(config.temperature !== null || config.top_p !== null || config.max_tokens !== null) && <p className="mt-1 text-xs text-slate-400">温度 {config.temperature ?? "默认"} · top_p {config.top_p ?? "默认"} · max_tokens {config.max_tokens ?? "默认"}</p>}<p className="mt-1 font-mono text-xs text-slate-400">{config.api_key_masked}</p></div>
+              <div><div className="flex items-center gap-2 font-medium text-theme-text">{config.name}<Badge variant="muted">{PROTOCOL_PRESETS[config.protocol]?.label ?? config.protocol}</Badge>{config.is_active && <span className="inline-flex items-center gap-1 rounded-full bg-brand/10 px-2 py-0.5 text-xs text-brand"><CheckCircle2 size={12} />当前使用</span>}</div><p className="mt-1 text-sm text-theme-sub">{config.model_name} · {config.base_url}</p>{(config.temperature !== null || config.top_p !== null || config.max_tokens !== null) && <p className="mt-1 text-xs text-slate-400">温度 {config.temperature ?? "默认"} · top_p {config.top_p ?? "默认"} · max_tokens {config.max_tokens ?? "默认"}</p>}<p className="mt-1 font-mono text-xs text-slate-400">{config.api_key_masked}</p></div>
               <div className="flex flex-wrap gap-2"><Button size="sm" variant="outline" onClick={() => void test(config.id)}><Wifi size={14} />测试</Button><Button size="sm" variant="outline" onClick={() => edit(config)}><Pencil size={14} />编辑</Button>{!config.is_active && <Button size="sm" onClick={() => void activate(config.id)}>设为当前</Button>}<Button size="sm" variant="ghost" className="text-red-600 hover:bg-red-50 hover:text-red-700" aria-label={`删除 ${config.name}`} onClick={() => void remove(config.id)}><Trash2 size={15} /></Button></div>
             </CardContent></Card>
           ))}
