@@ -1,11 +1,14 @@
 import uuid
 from datetime import datetime
+from typing import Literal
 
 from pydantic import BaseModel, Field, field_validator
 
 
 class ModelConfigCreate(BaseModel):
     name: str = Field(min_length=1, max_length=64)
+    # 协议适配层：openai=OpenAI Chat Completions 兼容 / anthropic=Claude Messages API
+    protocol: Literal["openai", "anthropic"] = "openai"
     base_url: str = Field(min_length=8, max_length=512)
     model_name: str = Field(min_length=1, max_length=128)
     api_key: str = Field(min_length=1, max_length=512)
@@ -27,6 +30,7 @@ class ModelConfigCreate(BaseModel):
 
 class ModelConfigUpdate(BaseModel):
     name: str | None = Field(default=None, min_length=1, max_length=64)
+    protocol: Literal["openai", "anthropic"] | None = None
     base_url: str | None = Field(default=None, min_length=8, max_length=512)
     model_name: str | None = Field(default=None, min_length=1, max_length=128)
     api_key: str | None = Field(default=None, min_length=1, max_length=512)
@@ -41,6 +45,7 @@ class ModelConfigUpdate(BaseModel):
 class ModelConfigOut(BaseModel):
     id: uuid.UUID
     name: str
+    protocol: str
     base_url: str
     model_name: str
     api_key_masked: str

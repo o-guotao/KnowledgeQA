@@ -26,6 +26,9 @@ class ProviderConfig:
     temperature: float | None = None
     top_p: float | None = None
     max_tokens: int | None = None
+    # 协议适配层：openai=OpenAI Chat Completions 兼容 / anthropic=Claude Messages API
+    # 默认 openai 向后兼容（既有构造方不受影响）
+    protocol: str = "openai"
 
 
 def _cipher() -> Fernet:
@@ -114,6 +117,7 @@ async def resolve_provider_config(db: AsyncSession, user_id: uuid.UUID) -> Provi
             max_tokens=config.max_tokens,
             price_input_per_million=(config.price_input_per_million if config.price_input_per_million is not None else settings.deepseek_price_input_per_million),
             price_output_per_million=(config.price_output_per_million if config.price_output_per_million is not None else settings.deepseek_price_output_per_million),
+            protocol=config.protocol,
         )
     settings = get_settings()
     if not settings.deepseek_api_key:

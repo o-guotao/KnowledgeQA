@@ -16,6 +16,8 @@ class ModelConfig(Base):
         UUIDType(), ForeignKey("users.id", ondelete="CASCADE"), nullable=False, index=True
     )
     name: Mapped[str] = mapped_column(String(64), nullable=False)
+    # 协议适配层：openai=OpenAI Chat Completions 兼容 / anthropic=Claude Messages API
+    protocol: Mapped[str] = mapped_column(String(20), default="openai", nullable=False)
     base_url: Mapped[str] = mapped_column(String(512), nullable=False)
     model_name: Mapped[str] = mapped_column(String(128), nullable=False)
     api_key_encrypted: Mapped[str] = mapped_column(Text, nullable=False)

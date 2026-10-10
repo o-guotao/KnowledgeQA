@@ -35,7 +35,8 @@ router = APIRouter()
 
 def to_out(config: ModelConfig) -> ModelConfigOut:
     return ModelConfigOut(
-        id=config.id, name=config.name, base_url=config.base_url, model_name=config.model_name,
+        id=config.id, name=config.name, protocol=config.protocol,
+        base_url=config.base_url, model_name=config.model_name,
         api_key_masked=config.api_key_hint, timeout_seconds=config.timeout_seconds,
         temperature=config.temperature, top_p=config.top_p, max_tokens=config.max_tokens,
         price_input_per_million=config.price_input_per_million,
@@ -75,7 +76,8 @@ async def create_model_config(
     base_url = await normalize_public_base_url(body.base_url)
     has_config = (await db.execute(select(ModelConfig.id).where(ModelConfig.user_id == user.id).limit(1))).scalar_one_or_none()
     config = ModelConfig(
-        user_id=user.id, name=body.name, base_url=base_url, model_name=body.model_name,
+        user_id=user.id, name=body.name, protocol=body.protocol,
+        base_url=base_url, model_name=body.model_name,
         api_key_encrypted=encrypt_api_key(body.api_key), api_key_hint=api_key_hint(body.api_key),
         timeout_seconds=body.timeout_seconds, temperature=body.temperature, top_p=body.top_p,
         max_tokens=body.max_tokens, price_input_per_million=body.price_input_per_million,
@@ -145,6 +147,7 @@ async def test_model_config(
                 timeout_seconds=config.timeout_seconds, temperature=config.temperature,
                 top_p=config.top_p, max_tokens=config.max_tokens,
                 price_input_per_million=0, price_output_per_million=0,
+                protocol=config.protocol,
             )
         await test_provider_connection(provider)
         return ModelConfigTestResult(ok=True, message="连接成功")
