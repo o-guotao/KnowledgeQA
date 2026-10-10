@@ -22,15 +22,14 @@ import math
 import uuid
 from datetime import datetime, timezone
 
-import httpx
 from sqlalchemy import delete, func, select, update
 
 from app.db import SessionLocal
 from app.models.memory import MemoryItem
 from app.models.message import Message
 from app.models.session import Session
-from app.services.deepseek import ModelCallError
 from app.services.embedding import embed_texts
+from app.services.llm_client import chat as llm_chat
 from app.services.model_configs import ProviderConfig
 
 logger = logging.getLogger(__name__)
@@ -52,30 +51,17 @@ _MEMORY_TIMEOUT = 30.0
 
 
 async def _chat(provider: ProviderConfig, system: str, user: str, max_tokens: int) -> tuple[str, dict | None]:
-    """记忆系统的最小 LLM 调用（非流式、低温度、短输出）。"""
-    timeout = httpx.Timeout(min(provider.timeout_seconds, _MEMORY_TIMEOUT), connect=10.0)
-    async with httpx.AsyncClient(timeout=timeout) as client:
-        response = await client.post(
-            f"{provider.base_url}/chat/completions",
-            headers={"Authorization": f"Bearer {provider.api_key}"},
-            json={
-                "model": provider.model_name,
-                "messages": [
-                    {"role": "system", "content": system},
-                    {"role": "user", "content": user},
-                ],
-                "stream": False,
-                "temperature": 0,
-                "max_tokens": max_tokens,
-            },
-        )
-    if response.status_code != 200:
-        raise ModelCallError(f"memory provider {response.status_code}")
-    data = response.json()
-    return (
-        (data.get("choices") or [{}])[0].get("message", {}).get("content") or "",
-        data.get("usage"),
+    """记忆系统的最小 LLM 调用（非流式、低温度、短输出）。统一走 llm_client。"""
+    result = await llm_chat(
+        provider,
+        [
+            {"role": "system", "content": system},
+            {"role": "user", "content": user},
+        ],
+        max_tokens=max_tokens,
+        timeout_cap=_MEMORY_TIMEOUT,
     )
+    return result.content, result.usage
 
 
 def _parse_json_array(raw: str) -> list[dict]:

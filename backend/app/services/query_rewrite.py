@@ -11,9 +11,7 @@ import json
 import logging
 from dataclasses import dataclass, field
 
-import httpx
-
-from app.services.deepseek import ModelCallError
+from app.services.llm_client import chat as llm_chat
 from app.services.model_configs import ProviderConfig
 
 logger = logging.getLogger(__name__)
@@ -74,25 +72,13 @@ async def rewrite_query(
 ) -> RewriteResult:
     """条件改写检索 query。history 为不含当前问题的历史消息；失败抛异常由调用方兜底。"""
     messages = _build_messages(history, question)
-    timeout = httpx.Timeout(min(provider.timeout_seconds, _TIMEOUT_SECONDS), connect=10.0)
-    async with httpx.AsyncClient(timeout=timeout) as client:
-        response = await client.post(
-            f"{provider.base_url}/chat/completions",
-            headers={"Authorization": f"Bearer {provider.api_key}"},
-            json={
-                "model": provider.model_name,
-                "messages": messages,
-                "stream": False,
-                "temperature": 0,  # 改写要确定性，不用对话的采样参数
-                "max_tokens": 200,
-            },
-        )
-    if response.status_code != 200:
-        raise ModelCallError(f"query rewrite provider {response.status_code}")
-    data = response.json()
-    raw = (data.get("choices") or [{}])[0].get("message", {}).get("content") or ""
-    query, rewritten = _parse_output(raw, question)
+    result = await llm_chat(
+        provider, messages,
+        max_tokens=200,  # 改写只需短输出
+        timeout_cap=_TIMEOUT_SECONDS,  # 串行在检索前，不能吃光 TTFT 预算
+    )
+    query, rewritten = _parse_output(result.content, question)
     return RewriteResult(
         query=query, rewritten=rewritten,
-        usage=data.get("usage"), messages=messages, output=raw,
+        usage=result.usage, messages=result.messages, output=result.content,
     )
