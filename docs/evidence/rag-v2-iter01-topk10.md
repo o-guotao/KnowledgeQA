@@ -1,0 +1,50 @@
+# RAG 评估报告：iter01-topk10
+
+- 描述：检索参数：top_k 5→10
+- 题目数：50；生成层评审：是（judged=50）
+- 耗时：174.8s；完成时间：2026-10-12 16:29:47
+
+## 配置快照
+
+```json
+{
+  "tag": "iter01-topk10",
+  "desc": "检索参数：top_k 5→10",
+  "top_k": 10,
+  "top_k_mode": "fixed",
+  "candidate_multiplier": 4,
+  "hybrid": true,
+  "bm25": true,
+  "rrf_k": 60,
+  "rerank": false,
+  "chunk_size": 512,
+  "chunk_overlap": 64,
+  "chunk_strategy": "window",
+  "context_chunks": 5,
+  "prompt_variant": "default",
+  "gen_model": null
+}
+```
+
+## 与基线的变量差异（应为单变量）
+
+- `top_k`: 5 → 10
+
+## 指标对比（基线 baseline vs 本轮）
+
+| 指标 | 层 | 基线 | 本轮 | delta |
+|---|---|---|---|---|
+| 召回率 Recall@K | 检索层 | 100.00% | 100.00% | +0.00% |
+| 精准率 Precision@K | 检索层 | 26.00% | 13.00% | -13.00% |
+| MRR | 检索层 | 0.942 | 0.945 | +0.003 |
+| 忠实度 | 生成层 | 97.31% | 96.47% | -0.84% |
+| 答案相关性 | 生成层 | 95.80% | 95.80% | +0.00% |
+| 上下文相关性 | 生成层 | 26.00% | 26.40% | +0.40% |
+| 上下文召回 | 生成层 | 99.50% | 99.50% | +0.00% |
+
+## 逐题命中变化
+
+- q20 常规发布窗口是每周哪几天？：基线 hit=True rank=4 → 本轮 hit=True rank=2
+- q43 供应商的对外付款集中在每周几？：基线 hit=True rank=3 → 本轮 hit=True rank=4
+- q20 常规发布窗口是每周哪几天？：基线 hit=True rank=4 → 本轮 hit=True rank=2
+- q43 供应商的对外付款集中在每周几？：基线 hit=True rank=3 → 本轮 hit=True rank=4
